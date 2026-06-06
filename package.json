@@ -1,18 +1,19 @@
 {
   "name": "flappy-petya",
   "private": true,
-  "version": "1.0.0",
-  "type": "module",
+  "workspaces": [
+    "web"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "dev": "npm run dev -w flappy-petya-web",
+    "build": "npm run build -w flappy-petya-web",
+    "build:android": "npm run build:android -w flappy-petya-web",
+    "check": "npm run check -w flappy-petya-web",
+    "cap:sync": "npm run cap:sync -w flappy-petya-web",
+    "cap:open:android": "npm run cap:open:android -w flappy-petya-web",
+    "prepare": "husky"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "vite": "^6.3.5"
-  },
-  "dependencies": {
-    "firebase": "^12.14.0"
+    "husky": "^9.1.7"
   }
 }

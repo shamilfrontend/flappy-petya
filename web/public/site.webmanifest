@@ -1,0 +1,20 @@
+{
+  "name": "Flappy Petya",
+  "short_name": "Flappy Petya",
+  "description": "Аркадная игра Flappy Petya",
+  "icons": [
+    {
+      "src": "favicon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "favicon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#00A196",
+  "background_color": "#C5EAF5",
+  "display": "standalone"
+}

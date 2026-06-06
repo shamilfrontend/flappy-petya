@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Flappy Petya">
+  <defs>
+    <linearGradient id="tie" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#66CFC8" />
+      <stop offset="100%" stop-color="#007A72" />
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" fill="#C5EAF5" />
+  <g transform="translate(16 17)">
+    <ellipse cx="0" cy="5.5" rx="5.8" ry="6.2" fill="#fff" stroke="#2A2A2A" stroke-width="0.9" />
+    <path d="M-3.2 2.2 Q0 0.8 3.2 2.2" fill="none" stroke="#2A2A2A" stroke-width="0.7" />
+    <path d="M-2.1 1.2 L-2.1 5.8" stroke="#2A2A2A" stroke-width="0.55" />
+    <path d="M0 0.9 L0 5.8" stroke="#2A2A2A" stroke-width="0.55" />
+    <path d="M2.1 1.2 L2.1 5.8" stroke="#2A2A2A" stroke-width="0.55" />
+    <rect x="-0.55" y="-1.2" width="1.1" height="3.2" rx="0.2" fill="url(#tie)" />
+    <path d="M-4.8 -4.2 Q-4.8 -7.2 -2.2 -8.4 L2.4 -8.4 Q5 -7.2 5 -4.2 L5 -2.8 Q5 -1.2 3.6 -0.8 L-3.6 -0.8 Q-5 -1.2 -5 -2.8 Z" fill="#fff" stroke="#2A2A2A" stroke-width="0.9" />
+    <path d="M3.8 -6.2 L6.2 -5.4 L5.4 -3.8 Z" fill="#F5B942" stroke="#2A2A2A" stroke-width="0.7" />
+    <circle cx="1.8" cy="-5.8" r="0.55" fill="#2A2A2A" />
+    <path d="M-1.4 11.2 L-1.4 12.6 M1.4 11.2 L1.4 12.6" stroke="#F5B942" stroke-width="1.1" stroke-linecap="round" />
+    <ellipse cx="-1.4" cy="12.9" rx="0.9" ry="0.45" fill="#F5B942" stroke="#2A2A2A" stroke-width="0.5" />
+    <ellipse cx="1.4" cy="12.9" rx="0.9" ry="0.45" fill="#F5B942" stroke="#2A2A2A" stroke-width="0.5" />
+  </g>
+</svg>
