@@ -46,24 +46,30 @@ import {
   getSelectedDifficulty,
   getTopRecordsByLevel,
   initStorage,
+  isAuthRequired,
+  isFirebaseSyncPending,
   isLeaderboardLoading,
+  isUserSignedIn,
   refreshLeaderboard,
-  savePlayerName,
   saveRecord,
   saveSelectedDifficulty,
+  signInWithGoogleAccount,
+  signOutFromGame,
 } from '../lib/storage';
 import { hideAppLoader } from '../ui/app-loader';
-import { NameInputOverlay } from '../ui/name-input';
 import {
   applyCanvasSize,
   getViewportState,
   type ViewportState,
 } from '../lib/viewport';
 import {
+  DEATH_ANIM_DURATION,
   FG_TILE_WIDTH,
   GROUND_HEIGHT,
   MAX_FRAME_DELTA,
   MS_PER_FRAME,
+  SHAKE_DURATION,
+  SHAKE_INTENSITY,
 } from './config';
 import {
   DIFFICULTIES,
@@ -87,6 +93,8 @@ const PLAY_BUTTON_LABEL = 'Играть';
 const RECORDS_BUTTON_LABEL = 'Рекорды';
 const SETTINGS_BUTTON_LABEL = 'Настройки';
 const BACK_BUTTON_LABEL = 'Назад';
+const GOOGLE_SIGN_IN_LABEL = 'Войти через Google';
+const SIGN_OUT_LABEL = 'Выйти';
 
 export class Game {
   private canvas!: HTMLCanvasElement;
@@ -100,7 +108,6 @@ export class Game {
 
   private readonly goose = new Goose();
   private readonly pipes = new Pipes();
-  private readonly nameInput = new NameInputOverlay();
   private readonly sound = getSoundManager();
   private readonly haptic = getHapticManager();
 
@@ -110,10 +117,11 @@ export class Game {
   private score = 0;
   private playerName = getSavedPlayerName();
   private personalBest = 0;
-  private isAwaitingName = false;
+  private isAwaitingAuth = false;
   private okBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   private recordsBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   private playerNameBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private signOutBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   private backBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   private recordsTabBtns: ButtonRect[] = [];
   private recordsLevelTab: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
@@ -130,6 +138,9 @@ export class Game {
   private fgScrollSpeed = getDifficultyById(DIFFICULTY_LEVELS.Medium).fgScrollSpeed;
   private hasSavedCurrentScore = false;
   private lastScoredLevel: DifficultyLevel | undefined;
+  private deathAnimTimer = 0;
+  private shakeTimer = 0;
+  private shakeIntensity = 0;
   private lastFrameTime = 0;
   start(): void {
     this.canvas = document.createElement('canvas');
@@ -198,14 +209,27 @@ export class Game {
     this.recordsBtn = recordsBtn;
     this.settingsBtn = settingsBtn;
 
-    if (this.playerName) {
-      const playerNameBtnSize = measurePlayerNameButton(this.ctx, this.playerName);
+    if (this.playerName && isUserSignedIn()) {
+      const playerNameBtnSize = measurePlayerNameButton(
+        this.ctx,
+        this.playerName,
+        logicalWidth,
+      );
+      const signOutBtnSize = measureButton(this.ctx, SIGN_OUT_LABEL);
       this.playerNameBtn = {
         x: (logicalWidth - playerNameBtnSize.width) / 2,
         y: this.recordsBtn.y + this.recordsBtn.height + FOOTER_BUTTON_GAP,
         width: playerNameBtnSize.width,
         height: playerNameBtnSize.height,
       };
+      this.signOutBtn = {
+        x: (logicalWidth - signOutBtnSize.width) / 2,
+        y: this.playerNameBtn.y + this.playerNameBtn.height + FOOTER_BUTTON_GAP,
+        width: signOutBtnSize.width,
+        height: signOutBtnSize.height,
+      };
+    } else {
+      this.signOutBtn = { x: 0, y: 0, width: 0, height: 0 };
     }
 
     const settingsLayout = getSettingsLayout(logicalHeight);
@@ -239,7 +263,7 @@ export class Game {
       DIFFICULTIES.length,
     );
 
-    const playBtnSize = measureButton(this.ctx, PLAY_BUTTON_LABEL);
+    const playBtnSize = measureButton(this.ctx, this.getPlayButtonLabel());
     this.playBtn = {
       x: (logicalWidth - playBtnSize.width) / 2,
       y: splashLayout.playButtonY,
@@ -266,9 +290,9 @@ export class Game {
     bindGameKeyboard({
       jump: () => this.performJump(),
       pause: () => this.togglePause(),
-      canJump: () => this.currentState === GAME_STATES.Game && !this.isAwaitingName,
+      canJump: () => this.currentState === GAME_STATES.Game && !this.isAwaitingAuth,
       canPause: () =>
-        !this.isAwaitingName
+        !this.isAwaitingAuth
         && (this.currentState === GAME_STATES.Game
           || this.currentState === GAME_STATES.Paused),
     });
@@ -324,6 +348,12 @@ export class Game {
     this.layoutUi();
   }
 
+  private getPlayButtonLabel(): string {
+    return isAuthRequired() && !isUserSignedIn()
+      ? GOOGLE_SIGN_IN_LABEL
+      : PLAY_BUTTON_LABEL;
+  }
+
   private syncStateFromStorage(): void {
     this.playerName = getSavedPlayerName();
 
@@ -354,7 +384,7 @@ export class Game {
   }
 
   private readonly onPress = (evt: PressEvent): void => {
-    if (this.isAwaitingName) {
+    if (this.isAwaitingAuth) {
       return;
     }
 
@@ -370,15 +400,12 @@ export class Game {
         }
 
         if (isPointInRect(point, this.recordsBtn)) {
-          this.recordsLevelTab =
-            this.lastScoredLevel ?? this.selectedDifficulty;
-          this.currentState = GAME_STATES.Records;
-          void refreshLeaderboard(this.recordsLevelTab);
+          void this.openRecords();
           break;
         }
 
-        if (this.playerName && isPointInRect(point, this.playerNameBtn)) {
-          void this.editPlayerName();
+        if (isUserSignedIn() && isPointInRect(point, this.signOutBtn)) {
+          void this.handleSignOut();
           break;
         }
 
@@ -388,7 +415,7 @@ export class Game {
         }
 
         if (isPointInRect(point, this.playBtn)) {
-          void this.startGameWithNamePrompt();
+          void this.startGame();
           break;
         }
 
@@ -475,6 +502,8 @@ export class Game {
           this.currentState = GAME_STATES.Splash;
           this.score = 0;
           this.hasSavedCurrentScore = false;
+          this.deathAnimTimer = 0;
+          this.shakeTimer = 0;
           this.layoutUi();
         }
         break;
@@ -482,55 +511,84 @@ export class Game {
     }
   };
 
-  private async editPlayerName(): Promise<void> {
-    if (this.isAwaitingName) {
+  private async openRecords(): Promise<void> {
+    if (!(await this.ensureSignedIn())) {
       return;
     }
 
-    this.isAwaitingName = true;
+    this.recordsLevelTab =
+      this.lastScoredLevel ?? this.selectedDifficulty;
+    this.currentState = GAME_STATES.Records;
+    void refreshLeaderboard(this.recordsLevelTab);
+  }
 
-    const result = await this.nameInput.prompt(this.playerName, {
-      submitLabel: 'Сохранить',
-    });
-    this.isAwaitingName = false;
+  private triggerDeath(): void {
+    this.currentState = GAME_STATES.Score;
+    this.deathAnimTimer = DEATH_ANIM_DURATION;
+    this.shakeTimer = SHAKE_DURATION;
+    this.shakeIntensity = SHAKE_INTENSITY;
+    this.sound.play(SOUND_EVENTS.Hit);
+    this.haptic.pulse(HAPTIC_EVENTS.Hit);
+  }
 
-    if (!result.confirmed) {
+  private async ensureSignedIn(): Promise<boolean> {
+    if (!isAuthRequired() || isUserSignedIn()) {
+      return true;
+    }
+
+    this.isAwaitingAuth = true;
+    const signInResult = await signInWithGoogleAccount();
+    this.isAwaitingAuth = false;
+
+    if (!signInResult.ok) {
+      if (signInResult.errorMessage) {
+        alert(signInResult.errorMessage);
+      }
+      return false;
+    }
+
+    this.syncStateFromStorage();
+    this.layoutUi();
+    return true;
+  }
+
+  private async handleSignOut(): Promise<void> {
+    if (this.isAwaitingAuth) {
       return;
     }
 
-    this.playerName = result.name;
-    savePlayerName(result.name);
+    this.isAwaitingAuth = true;
+    await signOutFromGame();
+    this.isAwaitingAuth = false;
+    this.playerName = '';
+    this.personalBest = 0;
     this.layoutUi();
   }
 
-  private async startGameWithNamePrompt(): Promise<void> {
-    if (this.isAwaitingName) {
+  private async startGame(): Promise<void> {
+    if (this.isAwaitingAuth) {
       return;
     }
 
-    if (this.playerName) {
-      this.beginGame(this.playerName);
+    if (!(await this.ensureSignedIn())) {
       return;
     }
 
-    this.isAwaitingName = true;
-
-    const result = await this.nameInput.prompt('');
-    this.isAwaitingName = false;
-
-    if (!result.confirmed) {
+    const name = getSavedPlayerName();
+    if (!name) {
       return;
     }
 
-    this.beginGame(result.name);
+    this.beginGame(name);
   }
 
   private beginGame(name: string): void {
     this.playerName = name;
-    savePlayerName(name);
     this.personalBest = getPersonalBest(this.playerName, this.selectedDifficulty);
     this.score = 0;
     this.hasSavedCurrentScore = false;
+    this.deathAnimTimer = 0;
+    this.shakeTimer = 0;
     this.isNewBest = false;
     this.layoutUi();
     this.currentState = GAME_STATES.Countdown;
@@ -578,6 +636,14 @@ export class Game {
         (this.fgpos - this.fgScrollSpeed * dt) % FG_TILE_WIDTH;
     }
 
+    if (this.shakeTimer > 0) {
+      this.shakeTimer = Math.max(0, this.shakeTimer - dt);
+    }
+
+    if (this.currentState === GAME_STATES.Score && this.deathAnimTimer > 0) {
+      this.deathAnimTimer = Math.max(0, this.deathAnimTimer - dt);
+    }
+
     if (this.currentState === GAME_STATES.Score && !this.hasSavedCurrentScore) {
       this.isNewBest = this.score > this.personalBest;
 
@@ -615,9 +681,7 @@ export class Game {
         this.goose,
         dt,
         () => {
-          this.currentState = GAME_STATES.Score;
-          this.sound.play(SOUND_EVENTS.Hit);
-          this.haptic.pulse(HAPTIC_EVENTS.Hit);
+          this.triggerDeath();
         },
         () => {
           this.score++;
@@ -635,9 +699,7 @@ export class Game {
       dt,
       () => {
         if (this.currentState === GAME_STATES.Game) {
-          this.currentState = GAME_STATES.Score;
-          this.sound.play(SOUND_EVENTS.Hit);
-          this.haptic.pulse(HAPTIC_EVENTS.Hit);
+          this.triggerDeath();
         }
       },
     );
@@ -647,6 +709,15 @@ export class Game {
     const { ctx, viewport, sprites } = this;
     const { logicalWidth, logicalHeight } = viewport;
     const centerX = logicalWidth / 2;
+
+    ctx.save();
+
+    if (this.shakeTimer > 0) {
+      const intensity = this.shakeIntensity * (this.shakeTimer / SHAKE_DURATION);
+      const shakeX = (Math.random() - 0.5) * 2 * intensity;
+      const shakeY = (Math.random() - 0.5) * 2 * intensity;
+      ctx.translate(shakeX, shakeY);
+    }
     const splashLayout = getSplashLayout(logicalHeight);
     const scoreLayout = getScoreLayout(logicalHeight);
     const recordsLayout = getRecordsLayout(logicalHeight);
@@ -674,7 +745,14 @@ export class Game {
         splashLayout.titleY,
         logicalWidth,
       );
-      drawSubtitle(ctx, 'Выбери уровень', centerX, splashLayout.subtitleY);
+      drawSubtitle(
+        ctx,
+        isAuthRequired() && !isUserSignedIn()
+          ? 'Войди через Google'
+          : 'Выбери уровень',
+        centerX,
+        splashLayout.subtitleY,
+      );
 
       DIFFICULTIES.forEach((difficulty, index) => {
         drawRecordsTab(
@@ -685,12 +763,13 @@ export class Game {
         );
       });
 
-      drawButton(ctx, PLAY_BUTTON_LABEL, this.playBtn, true);
+      drawButton(ctx, this.getPlayButtonLabel(), this.playBtn, true);
       drawRecordsTab(ctx, RECORDS_BUTTON_LABEL, this.recordsBtn, false);
       drawRecordsTab(ctx, SETTINGS_BUTTON_LABEL, this.settingsBtn, false);
 
-      if (this.playerName) {
+      if (this.playerName && isUserSignedIn()) {
         drawPlayerNameButton(ctx, this.playerName, this.playerNameBtn);
+        drawRecordsTab(ctx, SIGN_OUT_LABEL, this.signOutBtn, false);
       }
     }
 
@@ -700,6 +779,7 @@ export class Game {
         centerX,
         getCountdownY(logicalHeight),
         this.countdownStep,
+        this.countdownTimer / COUNTDOWN_STEP_DURATION,
       );
     }
 
@@ -740,20 +820,26 @@ export class Game {
         );
       });
 
+      const records = getTopRecordsByLevel(this.recordsLevelTab);
+      const isLoading = isLeaderboardLoading() && records.length === 0;
+      const isSyncing = (
+        isFirebaseSyncPending() || isLeaderboardLoading()
+      ) && records.length > 0;
+
       drawRecordsTable(
         ctx,
-        getTopRecordsByLevel(this.recordsLevelTab),
+        records,
         centerX,
         recordsLayout.tableStartY,
         logicalWidth,
-        isLeaderboardLoading()
-          && getTopRecordsByLevel(this.recordsLevelTab).length === 0,
+        isLoading,
         this.playerName,
+        isSyncing,
       );
       drawButton(ctx, BACK_BUTTON_LABEL, this.backBtn);
     }
 
-    if (this.currentState === GAME_STATES.Score) {
+    if (this.currentState === GAME_STATES.Score && this.deathAnimTimer <= 0) {
       drawSubtitle(
         ctx,
         this.isNewBest ? 'Новый рекорд!' : 'Игра окончена',
@@ -785,5 +871,7 @@ export class Game {
       drawPauseButton(ctx, this.pauseBtn);
       drawPauseOverlay(ctx, logicalWidth, logicalHeight, centerX, logicalHeight * 0.5);
     }
+
+    ctx.restore();
   }
 }

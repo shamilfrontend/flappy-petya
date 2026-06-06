@@ -27,6 +27,8 @@ function createMockContext(textWidth: number): CanvasRenderingContext2D {
   return {
     save: vi.fn(),
     restore: vi.fn(),
+    translate: vi.fn(),
+    scale: vi.fn(),
     font: '',
     fillStyle: '',
     strokeStyle: '',
@@ -78,13 +80,13 @@ describe('ui-text helpers', () => {
   });
 
   describe('measurePlayerNameButton', () => {
-    it('includes icon slot in button width', () => {
+    it('matches records panel width for viewport margins', () => {
       const ctx = createMockContext(60);
 
-      expect(measurePlayerNameButton(ctx, 'Петя')).toEqual({
+      expect(measurePlayerNameButton(ctx, 'Петя', 280)).toEqual({
         x: 0,
         y: 0,
-        width: 138,
+        width: 256,
         height: 48,
       });
     });
@@ -192,10 +194,12 @@ describe('ui-text helpers', () => {
       const ctx = createMockContext(40);
 
       drawCountdown(ctx, 160, 200, 0);
-      drawCountdown(ctx, 160, 200, 3);
+      drawCountdown(ctx, 160, 200, 3, 0.5);
 
-      expect(ctx.fillText).toHaveBeenCalledWith('3', 160, 200);
-      expect(ctx.fillText).toHaveBeenCalledWith('Поехали!', 160, 200);
+      expect(ctx.translate).toHaveBeenCalledWith(160, 200);
+      expect(ctx.scale).toHaveBeenCalled();
+      expect(ctx.fillText).toHaveBeenCalledWith('3', 0, 0);
+      expect(ctx.fillText).toHaveBeenCalledWith('Поехали!', 0, 0);
     });
 
     it('draws default and selected buttons', () => {
@@ -262,6 +266,27 @@ describe('ui-text helpers', () => {
       );
     });
 
+    it('draws syncing hint below records table', () => {
+      const ctx = createMockContext(60);
+
+      drawRecordsTable(
+        ctx,
+        [{ name: 'Петя', level: 'easy', score: 12 }],
+        160,
+        100,
+        320,
+        false,
+        'Петя',
+        true,
+      );
+
+      expect(ctx.fillText).toHaveBeenCalledWith(
+        'Обновление...',
+        160,
+        expect.any(Number),
+      );
+    });
+
     it('highlights current player row in records table', () => {
       const ctx = createMockContext(80);
 
@@ -319,12 +344,28 @@ describe('ui-text helpers', () => {
 
     it('draws player name button with icon slot', () => {
       const ctx = createMockContext(50);
+      const playerNameRect = { x: 32, y: 20, width: 256, height: 48 };
 
-      drawPlayerNameButton(ctx, 'Петя', rect);
+      drawPlayerNameButton(ctx, 'Петя', playerNameRect);
 
       expect(ctx.roundRect).toHaveBeenCalled();
       expect(ctx.arc).toHaveBeenCalled();
-      expect(ctx.fillText).toHaveBeenCalledWith('Петя', 85, 44);
+      expect(ctx.fillText).toHaveBeenCalledWith('Петя', 175, 44);
+    });
+
+    it('truncates long player names inside button width', () => {
+      const ctx = createMockContext(50);
+      ctx.measureText = vi.fn((text: string) => ({
+        width: text.length * 8,
+      })) as CanvasRenderingContext2D['measureText'];
+      const narrowRect = { x: 10, y: 20, width: 160, height: 48 };
+
+      drawPlayerNameButton(ctx, 'Шамиль Алисултанов', narrowRect);
+
+      const renderedName = String(ctx.fillText.mock.calls[0]?.[0]);
+
+      expect(renderedName.endsWith('…')).toBe(true);
+      expect(renderedName.length).toBeLessThan('Шамиль Алисултанов'.length);
     });
   });
 });

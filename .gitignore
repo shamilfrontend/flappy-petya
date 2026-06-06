@@ -1,6 +1,8 @@
 .idea
 node_modules
 dist
+src/
+public/
 coverage
 web/node_modules
 web/dist

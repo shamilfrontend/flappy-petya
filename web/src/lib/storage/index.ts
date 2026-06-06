@@ -4,26 +4,27 @@ import {
   initFirebaseApp,
   isFirebaseEnabled,
 } from '../firebase/app';
-import { ensureAnonymousAuth, getCurrentUid } from '../firebase/auth';
 import {
+  getAuthDisplayName,
+  getAuthErrorMessage,
+  getCurrentUid,
+  initAuth,
+  isUserAuthenticated,
+  signInWithGoogle,
+  signOutUser,
+  waitForAuthReady,
+} from '../firebase/auth';
+import {
+  clearLeaderboardCache,
   getCacheLeaderboard,
-  getCacheLocalRecords,
   getCacheProfile,
   isLeaderboardCacheLoading,
   isStorageCacheReady,
   setCacheLeaderboard,
-  setCacheLocalRecords,
   setCacheProfile,
   setLeaderboardCacheLoading,
   setStorageCacheReady,
 } from './cache';
-import {
-  getLocalPersonalBest,
-  getLocalPlayerName,
-  getLocalRecords,
-  saveLocalPlayerName,
-  upsertLocalRecord,
-} from './local';
 import { migrateLocalDataToFirestore } from './migrate';
 import {
   fetchPlayerProfile,
@@ -39,12 +40,17 @@ import {
 import {
   createDefaultProfile,
   deduplicateLeaderboardByName,
+  MAX_VALID_SCORE,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
   type PlayerProfile,
 } from './types';
 
-export { TOP_RECORDS_PER_LEVEL, type GameRecord } from './types';
+export {
+  MAX_VALID_SCORE,
+  TOP_RECORDS_PER_LEVEL,
+  type GameRecord,
+} from './types';
 
 type StorageTask = () => Promise<void>;
 
@@ -52,20 +58,9 @@ const pendingTasks: StorageTask[] = [];
 let isProcessingQueue = false;
 let currentUid: string | null = null;
 
-function hydrateFromLocalStorage(): void {
-  const localName = getLocalPlayerName();
-  const localRecords = getLocalRecords();
-  const profile = createDefaultProfile(localName);
-
-  if (localName) {
-    const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
-    levels.forEach((level) => {
-      profile.bests[level] = getLocalPersonalBest(localName, level);
-    });
-  }
-
-  setCacheProfile(profile);
-  setCacheLocalRecords(localRecords);
+function resetStorageCache(): void {
+  setCacheProfile(createDefaultProfile());
+  clearLeaderboardCache();
 }
 
 function enqueueTask(task: StorageTask): void {
@@ -125,7 +120,7 @@ async function loadAllLeaderboards(): Promise<void> {
     );
 
     results.forEach(({ level, records }) => {
-      setCacheLeaderboard(level, records);
+      syncLeaderboardCache(level, records);
     });
   } catch (error) {
     console.error('Failed to load leaderboards', error);
@@ -134,8 +129,33 @@ async function loadAllLeaderboards(): Promise<void> {
   }
 }
 
+async function loadStorageForUser(uid: string): Promise<void> {
+  currentUid = uid;
+
+  const db = getFirestoreDb();
+  if (!db) {
+    return;
+  }
+
+  const googleName = getAuthDisplayName();
+  let profile = await fetchPlayerProfile(db, uid);
+
+  if (!profile?.name) {
+    profile = await migrateLocalDataToFirestore(db, uid, googleName);
+  } else if (!profile.name.trim() && googleName) {
+    profile = { ...profile, name: googleName };
+    await savePlayerProfile(db, uid, profile);
+  } else {
+    await syncProfileBestsToLeaderboard(uid, profile);
+  }
+
+  setCacheProfile(profile);
+  await loadAllLeaderboards();
+  void processQueue();
+}
+
 export async function initStorage(): Promise<void> {
-  hydrateFromLocalStorage();
+  resetStorageCache();
 
   if (!isFirebaseEnabled()) {
     setStorageCacheReady(true);
@@ -144,28 +164,60 @@ export async function initStorage(): Promise<void> {
 
   try {
     initFirebaseApp();
-    currentUid = await ensureAnonymousAuth();
+    initAuth();
+    await waitForAuthReady();
 
-    const db = getFirestoreDb();
-    if (!db || !currentUid) {
-      setStorageCacheReady(true);
-      return;
+    const uid = getCurrentUid();
+    if (uid) {
+      await loadStorageForUser(uid);
     }
-
-    let profile = await fetchPlayerProfile(db, currentUid);
-    if (!profile?.name) {
-      profile = await migrateLocalDataToFirestore(db, currentUid);
-    } else {
-      await syncProfileBestsToLeaderboard(currentUid, profile);
-    }
-
-    setCacheProfile(profile);
-    await loadAllLeaderboards();
-    void processQueue();
   } catch (error) {
     console.error('Storage initialization failed', error);
   } finally {
     setStorageCacheReady(true);
+  }
+}
+
+export function isAuthRequired(): boolean {
+  return isFirebaseEnabled();
+}
+
+export function isUserSignedIn(): boolean {
+  return isFirebaseEnabled() && isUserAuthenticated();
+}
+
+export interface SignInResult {
+  ok: boolean;
+  errorMessage?: string;
+}
+
+export async function signInWithGoogleAccount(): Promise<SignInResult> {
+  if (!isFirebaseEnabled()) {
+    return { ok: false, errorMessage: 'Firebase не настроен.' };
+  }
+
+  try {
+    const user = await signInWithGoogle();
+    if (!user) {
+      return { ok: false };
+    }
+
+    await loadStorageForUser(user.uid);
+    return { ok: true };
+  } catch (error) {
+    console.error('Google account sign-in failed', error);
+    return { ok: false, errorMessage: getAuthErrorMessage(error) };
+  }
+}
+
+export async function signOutFromGame(): Promise<void> {
+  pendingTasks.length = 0;
+  isProcessingQueue = false;
+  currentUid = null;
+  resetStorageCache();
+
+  if (isFirebaseEnabled()) {
+    await signOutUser();
   }
 }
 
@@ -177,8 +229,16 @@ export function isLeaderboardLoading(): boolean {
   return isLeaderboardCacheLoading();
 }
 
+export function isFirebaseSyncPending(): boolean {
+  return pendingTasks.length > 0 || isProcessingQueue;
+}
+
 export function getSavedPlayerName(): string {
-  return getCacheProfile().name || getLocalPlayerName();
+  if (isFirebaseEnabled()) {
+    return getCacheProfile().name || getAuthDisplayName();
+  }
+
+  return getCacheProfile().name;
 }
 
 export function getSelectedDifficulty(): DifficultyLevel | undefined {
@@ -197,7 +257,6 @@ export function savePlayerName(name: string): void {
   };
 
   setCacheProfile(profile);
-  saveLocalPlayerName(trimmedName);
 
   const uid = currentUid ?? getCurrentUid();
   if (!uid || !isFirebaseEnabled()) {
@@ -245,18 +304,34 @@ export function saveSelectedDifficulty(level: DifficultyLevel): void {
   });
 }
 
+function isCurrentPlayerName(name: string): boolean {
+  const trimmedName = name.trim();
+  const profile = getCacheProfile();
+  const profileName = profile.name.trim();
+  const savedName = getSavedPlayerName().trim();
+
+  return (
+    (profileName.length > 0 && profileName === trimmedName)
+    || (profileName.length === 0 && savedName === trimmedName)
+  );
+}
+
 export function getPersonalBest(
   name: string,
   level: DifficultyLevel,
 ): number {
-  const profile = getCacheProfile();
   const trimmedName = name.trim();
 
-  if (profile.name && profile.name === trimmedName) {
-    return profile.bests[level] ?? 0;
+  if (isCurrentPlayerName(trimmedName)) {
+    return getCacheProfile().bests[level] ?? 0;
   }
 
-  return getLocalPersonalBest(trimmedName, level);
+  const leaderboard = getCacheLeaderboard(level) ?? [];
+  const record = leaderboard.find(
+    (item) => item.name === trimmedName && item.level === level,
+  );
+
+  return record?.score ?? 0;
 }
 
 function getProfileLeaderboardRecords(profile: PlayerProfile): GameRecord[] {
@@ -314,13 +389,18 @@ function mergeTopRecords(
   return deduplicateLeaderboardByName(combined);
 }
 
-function getLocalLeaderboardSources(level: DifficultyLevel): GameRecord[][] {
-  const localRecords = getCacheLocalRecords().filter(
-    (record) => record.level === level,
+function syncLeaderboardCache(
+  level: DifficultyLevel,
+  remoteRecords: GameRecord[],
+): void {
+  setCacheLeaderboard(
+    level,
+    mergeTopRecords(
+      level,
+      remoteRecords,
+      getProfileLeaderboardRecords(getCacheProfile()),
+    ),
   );
-  const profileRecords = getProfileLeaderboardRecords(getCacheProfile());
-
-  return [localRecords, profileRecords];
 }
 
 function ensureCurrentPlayerVisible(
@@ -335,29 +415,30 @@ function ensureCurrentPlayerVisible(
     return records.slice(0, limit);
   }
 
-  const top = records.slice(0, limit);
-  const playerInTop = top.some(
-    (record) => record.name === trimmedName && record.level === level,
-  );
-
-  if (playerInTop) {
-    return top;
-  }
-
-  const playerBest = Math.max(
-    getCacheProfile().bests[level] ?? 0,
-    getLocalPersonalBest(trimmedName, level),
-  );
+  const playerBest = getPersonalBest(trimmedName, level);
 
   if (playerBest <= 0) {
-    return top;
+    return records.slice(0, limit);
   }
 
+  const withoutPlayer = records.filter(
+    (record) => record.name !== trimmedName,
+  );
   const playerRecord: GameRecord = {
     name: trimmedName,
     level,
     score: playerBest,
   };
+  const merged = deduplicateLeaderboardByName(
+    [...withoutPlayer, playerRecord],
+    limit,
+  );
+
+  if (merged.some((record) => record.name === trimmedName)) {
+    return merged;
+  }
+
+  const top = withoutPlayer.slice(0, limit);
 
   if (top.length < limit) {
     return deduplicateLeaderboardByName([...top, playerRecord], limit);
@@ -373,7 +454,9 @@ export function getTopRecordsByLevel(
   level: DifficultyLevel,
   limit = TOP_RECORDS_PER_LEVEL,
 ): GameRecord[] {
-  const sources = getLocalLeaderboardSources(level);
+  const sources: GameRecord[][] = [
+    getProfileLeaderboardRecords(getCacheProfile()),
+  ];
 
   if (isFirebaseEnabled()) {
     const leaderboard = getCacheLeaderboard(level);
@@ -393,12 +476,9 @@ export function saveRecord(
   score: number,
 ): void {
   const trimmedName = name.trim();
-  if (!trimmedName || score <= 0) {
+  if (!trimmedName || score <= 0 || score > MAX_VALID_SCORE) {
     return;
   }
-
-  const localRecords = upsertLocalRecord(trimmedName, level, score);
-  setCacheLocalRecords(localRecords);
 
   const profile = getCacheProfile();
   const profileName = profile.name.trim();
@@ -444,7 +524,7 @@ export function saveRecord(
     setCacheProfile(updatedProfile);
 
     const records = await fetchLeaderboard(db, level);
-    setCacheLeaderboard(level, records);
+    syncLeaderboardCache(level, records);
   });
 }
 
@@ -463,7 +543,7 @@ export async function refreshLeaderboard(level: DifficultyLevel): Promise<void> 
 
   try {
     const records = await fetchLeaderboard(db, level);
-    setCacheLeaderboard(level, records);
+    syncLeaderboardCache(level, records);
     void processQueue();
   } catch (error) {
     console.error('Failed to refresh leaderboard', error);

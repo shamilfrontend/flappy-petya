@@ -48,15 +48,16 @@ describe('migrateLocalDataToFirestore', () => {
     };
     fetchPlayerProfile.mockResolvedValue(existingProfile);
 
-    await expect(migrateLocalDataToFirestore(db, uid)).resolves.toBe(existingProfile);
+    await expect(
+      migrateLocalDataToFirestore(db, uid, 'Петя'),
+    ).resolves.toBe(existingProfile);
 
     expect(savePlayerProfile).not.toHaveBeenCalled();
     expect(upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
 
-  it('migrates local player name and bests to firestore', async () => {
+  it('migrates google display name and legacy bests to firestore', async () => {
     fetchPlayerProfile.mockResolvedValue(null);
-    localStorage.setItem('flappy-petya-player-name', 'Петя');
     localStorage.setItem(
       'flappy-petya-records',
       JSON.stringify([
@@ -65,7 +66,9 @@ describe('migrateLocalDataToFirestore', () => {
       ]),
     );
 
-    await expect(migrateLocalDataToFirestore(db, uid)).resolves.toEqual({
+    await expect(
+      migrateLocalDataToFirestore(db, uid, 'Петя'),
+    ).resolves.toEqual({
       name: 'Петя',
       bests: { easy: 12, medium: 0, hard: 7 },
     });
@@ -79,37 +82,23 @@ describe('migrateLocalDataToFirestore', () => {
       },
     );
     expect(upsertLeaderboardEntry).toHaveBeenCalledTimes(2);
-    expect(upsertLeaderboardEntry).toHaveBeenCalledWith(
-      db,
-      uid,
-      'easy',
-      'Петя',
-      12,
-    );
   });
 
-  it('saves empty profile when local name is missing', async () => {
+  it('saves empty profile when google display name is missing', async () => {
     fetchPlayerProfile.mockResolvedValue(null);
 
-    await expect(migrateLocalDataToFirestore(db, uid)).resolves.toEqual({
+    await expect(
+      migrateLocalDataToFirestore(db, uid, ''),
+    ).resolves.toEqual({
       name: '',
       bests: { easy: 0, medium: 0, hard: 0 },
     });
 
-    expect(savePlayerProfile).toHaveBeenCalledWith(
-      db,
-      uid,
-      {
-        name: '',
-        bests: { easy: 0, medium: 0, hard: 0 },
-      },
-    );
     expect(upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
 
   it('does not upload leaderboard entries for other players', async () => {
     fetchPlayerProfile.mockResolvedValue(null);
-    localStorage.setItem('flappy-petya-player-name', 'Петя');
     localStorage.setItem(
       'flappy-petya-records',
       JSON.stringify([
@@ -118,7 +107,7 @@ describe('migrateLocalDataToFirestore', () => {
       ]),
     );
 
-    await migrateLocalDataToFirestore(db, uid);
+    await migrateLocalDataToFirestore(db, uid, 'Петя');
 
     expect(upsertLeaderboardEntry).toHaveBeenCalledOnce();
     expect(upsertLeaderboardEntry).toHaveBeenCalledWith(

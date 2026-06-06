@@ -7,7 +7,6 @@ import {
 
 interface StorageCache {
   profile: PlayerProfile;
-  localRecords: GameRecord[];
   leaderboards: Partial<Record<DifficultyLevel, GameRecord[]>>;
   isReady: boolean;
   isLeaderboardLoading: boolean;
@@ -15,7 +14,6 @@ interface StorageCache {
 
 const cache: StorageCache = {
   profile: createDefaultProfile(),
-  localRecords: [],
   leaderboards: {},
   isReady: false,
   isLeaderboardLoading: false,
@@ -27,14 +25,6 @@ export function getCacheProfile(): PlayerProfile {
 
 export function setCacheProfile(profile: PlayerProfile): void {
   cache.profile = profile;
-}
-
-export function getCacheLocalRecords(): GameRecord[] {
-  return cache.localRecords;
-}
-
-export function setCacheLocalRecords(records: GameRecord[]): void {
-  cache.localRecords = records;
 }
 
 export function getCacheLeaderboard(level: DifficultyLevel): GameRecord[] | undefined {
@@ -62,4 +52,8 @@ export function isLeaderboardCacheLoading(): boolean {
 
 export function setLeaderboardCacheLoading(value: boolean): void {
   cache.isLeaderboardLoading = value;
+}
+
+export function clearLeaderboardCache(): void {
+  cache.leaderboards = {};
 }

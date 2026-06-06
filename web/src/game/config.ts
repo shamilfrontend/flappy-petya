@@ -28,3 +28,7 @@ export const BASE_HEIGHT = 480;
 export const GROUND_OFFSET = 10;
 export const SPLASH_GOOSE_BASE_OFFSET = 245;
 export const SPLASH_GOOSE_HOVER_AMPLITUDE = 5;
+
+export const DEATH_ANIM_DURATION = 20;
+export const SHAKE_DURATION = 12;
+export const SHAKE_INTENSITY = 4;

@@ -63,6 +63,9 @@ npm run cap:open:android
 - Подсветка своей строки в таблице рекордов
 - Медали на экране счёта: бронза (10+), серебро (25+), золото (50+)
 - Подсветка «Новый рекорд!» при побитии личного best
+- Анимации: падение при смерти, screen shake, пульс countdown
+
+История изменений — [CHANGELOG.md](CHANGELOG.md) (текущая версия **1.2.0**).
 
 ## Качество кода
 
@@ -93,6 +96,15 @@ npm run test:coverage -w flappy-petya-web
 
 Переменные окружения — в `web/.env.example`. Для CI — GitHub Secrets с префиксом `VITE_FIREBASE_*`.
 Правила Firestore — `firestore.rules` в корне репозитория.
+
+### Google Sign-In
+
+1. [Firebase Console](https://console.firebase.google.com/) → проект → **Authentication** → **Sign-in method**
+2. Включите провайдер **Google** (Status: Enabled)
+3. Укажите support email и сохраните
+4. **Authentication** → **Settings** → **Authorized domains** — добавьте `localhost` и домен деплоя
+
+Без включённого Google провайдера вход падает с `auth/operation-not-allowed`.
 
 ## Код web
 

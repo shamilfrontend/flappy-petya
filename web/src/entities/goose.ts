@@ -52,6 +52,20 @@ export class Goose {
       return;
     }
 
+    if (state === GAME_STATES.Score) {
+      this.velocity += GOOSE_GRAVITY * 0.5 * dt;
+      this.y += this.velocity * dt;
+      this.rotation += 0.15 * dt;
+
+      const groundY = height - fgHeight - GROUND_OFFSET;
+      if (this.y >= groundY) {
+        this.y = groundY;
+        this.velocity = 0;
+      }
+
+      return;
+    }
+
     if (
       state === GAME_STATES.Splash
       || state === GAME_STATES.Records

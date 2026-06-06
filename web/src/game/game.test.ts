@@ -1,16 +1,18 @@
-const nameInputPrompt = vi.hoisted(() => vi.fn());
-
 const storageMocks = vi.hoisted(() => ({
   getSavedPlayerName: vi.fn(() => ''),
   getSelectedDifficulty: vi.fn((): undefined => undefined),
   getPersonalBest: vi.fn(() => 0),
   getTopRecordsByLevel: vi.fn(() => []),
   initStorage: vi.fn(() => Promise.resolve()),
+  isAuthRequired: vi.fn(() => false),
   isLeaderboardLoading: vi.fn(() => false),
+  isFirebaseSyncPending: vi.fn(() => false),
+  isUserSignedIn: vi.fn(() => true),
   refreshLeaderboard: vi.fn(() => Promise.resolve()),
-  savePlayerName: vi.fn(),
   saveRecord: vi.fn(),
   saveSelectedDifficulty: vi.fn(),
+  signInWithGoogleAccount: vi.fn(() => Promise.resolve({ ok: true })),
+  signOutFromGame: vi.fn(() => Promise.resolve()),
 }));
 
 const getCanvasPointMock = vi.hoisted(() => vi.fn());
@@ -47,14 +49,6 @@ vi.mock('../input/haptic', () => ({
     Jump: 'jump',
     Score: 'score',
     Hit: 'hit',
-  },
-}));
-
-vi.mock('../ui/name-input', () => ({
-  NameInputOverlay: class {
-    prompt = nameInputPrompt;
-
-    hide = vi.fn();
   },
 }));
 
@@ -118,7 +112,13 @@ vi.mock('../input/pointer', async (importOriginal) => {
   };
 });
 
-import { drawPauseOverlay, drawRecordsTable, drawScoreBadge } from '../graphics/ui-text';
+import {
+  drawCountdown,
+  drawPauseOverlay,
+  drawRecordsTable,
+  drawScoreBadge,
+  drawScorePanel,
+} from '../graphics/ui-text';
 import { hideAppLoader } from '../ui/app-loader';
 import {
   getSavedPlayerName,
@@ -127,11 +127,10 @@ import {
   initStorage,
   isLeaderboardLoading,
   refreshLeaderboard,
-  savePlayerName,
   saveRecord,
   saveSelectedDifficulty,
 } from '../lib/storage';
-import { GOOSE_JUMP } from './config';
+import { DEATH_ANIM_DURATION, GOOSE_JUMP, SHAKE_DURATION } from './config';
 import { DIFFICULTIES, DIFFICULTY_LEVELS } from './difficulty';
 import { Game, RESIZE_DEBOUNCE_MS } from './game';
 import { GAME_STATES } from './states';
@@ -146,6 +145,10 @@ interface GamePrivate {
   selectedDifficulty: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS];
   recordsLevelTab: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS];
   lastScoredLevel: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS] | undefined;
+  deathAnimTimer: number;
+  shakeTimer: number;
+  countdownStep: number;
+  countdownTimer: number;
   goose: { velocity: number; y: number };
   onPress: (evt: MouseEvent) => void;
   onResize: () => void;
@@ -155,6 +158,7 @@ interface GamePrivate {
   canvas: HTMLCanvasElement;
   recordsBtn: { x: number; y: number; width: number; height: number };
   playerNameBtn: { x: number; y: number; width: number; height: number };
+  signOutBtn: { x: number; y: number; width: number; height: number };
   backBtn: { x: number; y: number; width: number; height: number };
   settingsBtn: { x: number; y: number; width: number; height: number };
   soundToggleBtn: { x: number; y: number; width: number; height: number };
@@ -253,10 +257,12 @@ describe('Game', () => {
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
 
     vi.clearAllMocks();
-    nameInputPrompt.mockResolvedValue({ name: 'Петя', confirmed: true });
     storageMocks.getSavedPlayerName.mockReturnValue('');
     storageMocks.getSelectedDifficulty.mockReturnValue(undefined);
     storageMocks.getPersonalBest.mockReturnValue(0);
+    storageMocks.isAuthRequired.mockReturnValue(false);
+    storageMocks.isUserSignedIn.mockReturnValue(true);
+    storageMocks.signInWithGoogleAccount.mockResolvedValue({ ok: true });
     getCanvasPointMock.mockReturnValue(null);
   });
 
@@ -303,10 +309,17 @@ describe('Game', () => {
     }
   }
 
+  async function pressPlay(game: Game): Promise<void> {
+    getCanvasPointMock.mockReturnValue({ x: 160, y: 222 });
+    press(game);
+    await vi.waitFor(() => {
+      expect(accessGame(game).currentState).toBe(GAME_STATES.Countdown);
+    });
+  }
+
   async function startActiveGame(playerName = 'Петя'): Promise<Game> {
     const game = await startGame(playerName);
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
-    press(game);
+    await pressPlay(game);
     finishCountdown(game);
     return game;
   }
@@ -335,42 +348,40 @@ describe('Game', () => {
     expect(accessGame(game).selectedDifficulty).toBe('hard');
   });
 
-  it('starts game immediately when player name already exists', async () => {
+  it('starts game when player name already exists', async () => {
     const game = await startGame('Петя');
-    getCanvasPointMock.mockReturnValue({ x: 160, y: 222 });
 
-    press(game);
+    await pressPlay(game);
 
     expect(accessGame(game).currentState).toBe(GAME_STATES.Countdown);
-    expect(savePlayerName).toHaveBeenCalledWith('Петя');
-    expect(nameInputPrompt).not.toHaveBeenCalled();
   });
 
-  it('prompts for name before starting game', async () => {
-    const game = await startGame();
-    getCanvasPointMock.mockReturnValue({ x: 160, y: 222 });
-    nameInputPrompt.mockResolvedValueOnce({ name: 'Новый', confirmed: true });
+  it('requires google sign-in before starting game', async () => {
+    storageMocks.isAuthRequired.mockReturnValue(true);
+    storageMocks.isUserSignedIn.mockReturnValue(false);
 
-    press(game);
+    const game = await startGame('Петя');
 
-    await vi.waitFor(() => {
-      expect(accessGame(game).currentState).toBe(GAME_STATES.Countdown);
+    await pressPlay(game);
+
+    expect(storageMocks.signInWithGoogleAccount).toHaveBeenCalledOnce();
+  });
+
+  it('does not start game when google sign-in fails', async () => {
+    storageMocks.isAuthRequired.mockReturnValue(true);
+    storageMocks.isUserSignedIn.mockReturnValue(false);
+    storageMocks.signInWithGoogleAccount.mockResolvedValueOnce({
+      ok: false,
+      errorMessage: 'Вход отменён.',
     });
 
-    expect(nameInputPrompt).toHaveBeenCalledOnce();
-    expect(accessGame(game).playerName).toBe('Новый');
-    expect(savePlayerName).toHaveBeenCalledWith('Новый');
-  });
-
-  it('does not start game when name prompt is cancelled', async () => {
     const game = await startGame();
     getCanvasPointMock.mockReturnValue({ x: 160, y: 222 });
-    nameInputPrompt.mockResolvedValueOnce({ name: 'Петя', confirmed: false });
 
     press(game);
 
     await vi.waitFor(() => {
-      expect(nameInputPrompt).toHaveBeenCalled();
+      expect(storageMocks.signInWithGoogleAccount).toHaveBeenCalled();
     });
 
     expect(accessGame(game).currentState).toBe(GAME_STATES.Splash);
@@ -382,7 +393,9 @@ describe('Game', () => {
 
     press(game);
 
-    expect(accessGame(game).currentState).toBe(GAME_STATES.Records);
+    await vi.waitFor(() => {
+      expect(accessGame(game).currentState).toBe(GAME_STATES.Records);
+    });
     expect(refreshLeaderboard).toHaveBeenCalledWith(DIFFICULTY_LEVELS.Medium);
   });
 
@@ -410,8 +423,7 @@ describe('Game', () => {
 
   it('makes goose jump during active game', async () => {
     const game = await startGame('Петя');
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
-    press(game);
+    await pressPlay(game);
     finishCountdown(game);
 
     const internals = accessGame(game);
@@ -458,8 +470,7 @@ describe('Game', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
 
     const game = await startGame('Петя');
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
-    press(game);
+    await pressPlay(game);
     finishCountdown(game);
 
     const internals = accessGame(game);
@@ -474,48 +485,35 @@ describe('Game', () => {
     }
 
     expect(internals.currentState).toBe(GAME_STATES.Score);
+    expect(internals.deathAnimTimer).toBe(DEATH_ANIM_DURATION);
+    expect(soundMocks.play).toHaveBeenCalledWith('hit');
   });
 
-  it('edits player name from splash screen', async () => {
+  it('signs out from splash screen', async () => {
     const game = await startGame('Петя');
-    nameInputPrompt.mockResolvedValueOnce({ name: 'Вася', confirmed: true });
-    getCanvasPointMock.mockReturnValue(centerOf(accessGame(game).playerNameBtn));
+    getCanvasPointMock.mockReturnValue(centerOf(accessGame(game).signOutBtn));
 
     press(game);
 
     await vi.waitFor(() => {
-      expect(accessGame(game).playerName).toBe('Вася');
+      expect(storageMocks.signOutFromGame).toHaveBeenCalledOnce();
     });
 
-    expect(nameInputPrompt).toHaveBeenCalledWith('Петя', { submitLabel: 'Сохранить' });
-    expect(savePlayerName).toHaveBeenCalledWith('Вася');
-  });
-
-  it('keeps player name when edit prompt is cancelled', async () => {
-    const game = await startGame('Петя');
-    nameInputPrompt.mockResolvedValueOnce({ name: 'Вася', confirmed: false });
-    getCanvasPointMock.mockReturnValue(centerOf(accessGame(game).playerNameBtn));
-
-    press(game);
-
-    await vi.waitFor(() => {
-      expect(nameInputPrompt).toHaveBeenCalled();
-    });
-
-    expect(accessGame(game).playerName).toBe('Петя');
-    expect(savePlayerName).not.toHaveBeenCalledWith('Вася');
+    expect(accessGame(game).playerName).toBe('');
   });
 
   it('switches records tab and refreshes leaderboard', async () => {
     const game = await startGame();
     getCanvasPointMock.mockReturnValueOnce(centerOf(accessGame(game).recordsBtn));
     press(game);
+    await vi.waitFor(() => {
+      expect(accessGame(game).currentState).toBe(GAME_STATES.Records);
+    });
     vi.mocked(refreshLeaderboard).mockClear();
     getCanvasPointMock.mockReturnValueOnce({ x: 53, y: 85 });
 
     press(game);
 
-    expect(accessGame(game).currentState).toBe(GAME_STATES.Records);
     expect(refreshLeaderboard).toHaveBeenCalledWith(DIFFICULTY_LEVELS.Easy);
   });
 
@@ -607,7 +605,9 @@ describe('Game', () => {
 
     press(game);
 
-    expect(internals.recordsLevelTab).toBe(DIFFICULTY_LEVELS.Easy);
+    await vi.waitFor(() => {
+      expect(internals.recordsLevelTab).toBe(DIFFICULTY_LEVELS.Easy);
+    });
     expect(refreshLeaderboard).toHaveBeenCalledWith(DIFFICULTY_LEVELS.Easy);
   });
 
@@ -745,6 +745,30 @@ describe('Game', () => {
       expect.any(Number),
       true,
       '',
+      false,
+    );
+  });
+
+  it('renders records table with syncing state when data exists', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Records;
+    vi.mocked(getTopRecordsByLevel).mockReturnValue([
+      { name: 'Петя', level: 'easy', score: 5 },
+    ]);
+    vi.mocked(isLeaderboardLoading).mockReturnValue(true);
+
+    internals.render();
+
+    expect(drawRecordsTable).toHaveBeenCalledWith(
+      expect.anything(),
+      [{ name: 'Петя', level: 'easy', score: 5 }],
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      false,
+      'Петя',
+      true,
     );
   });
 
@@ -792,8 +816,7 @@ describe('Game', () => {
 
   it('enters countdown and ignores jump input until game starts', async () => {
     const game = await startGame('Петя');
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
-    press(game);
+    await pressPlay(game);
 
     const internals = accessGame(game);
     expect(internals.currentState).toBe(GAME_STATES.Countdown);
@@ -807,8 +830,7 @@ describe('Game', () => {
 
   it('transitions from countdown to active game', async () => {
     const game = await startGame('Петя');
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
-    press(game);
+    await pressPlay(game);
 
     finishCountdown(game);
 
@@ -864,8 +886,7 @@ describe('Game', () => {
 
   it('plays countdown tick sound on step change', async () => {
     const game = await startGame('Петя');
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
-    press(game);
+    await pressPlay(game);
     soundMocks.play.mockClear();
 
     for (let frame = 0; frame < 50; frame += 1) {
@@ -905,5 +926,50 @@ describe('Game', () => {
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p' }));
     expect(accessGame(game).currentState).toBe(GAME_STATES.Game);
+  });
+
+  it('decays shake timer after death', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.shakeTimer = SHAKE_DURATION;
+
+    runUpdate(game, 5);
+
+    expect(internals.shakeTimer).toBe(SHAKE_DURATION - 5);
+
+    runUpdate(game, SHAKE_DURATION);
+
+    expect(internals.shakeTimer).toBe(0);
+  });
+
+  it('hides score panel while death animation plays', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Score;
+    internals.deathAnimTimer = 10;
+    vi.mocked(drawScorePanel).mockClear();
+
+    internals.render();
+
+    expect(drawScorePanel).not.toHaveBeenCalled();
+  });
+
+  it('passes countdown progress to drawCountdown', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Countdown;
+    internals.countdownStep = 1;
+    internals.countdownTimer = 22.5;
+    vi.mocked(drawCountdown).mockClear();
+
+    internals.render();
+
+    expect(drawCountdown).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Number),
+      expect.any(Number),
+      1,
+      0.5,
+    );
   });
 });

@@ -27,6 +27,27 @@ export interface Pipe {
 /** Доля компенсации широкого экрана: 0 — как раньше, 1 — как на базовой ширине. */
 const WIDE_SCREEN_SEED_BLEND = 0.4;
 
+/** Горизонтальный зазор между seed-столбцом и первым обычным спавном (для тестов). */
+export function getSeedGapAtFirstSpawn(
+  width: number,
+  pipeSpeed: number = PIPE_SPEED,
+): number | null {
+  const baseSpawnX = BASE_WIDTH + PIPE_SPAWN_MARGIN;
+  const wideSpawnX = width + PIPE_SPAWN_MARGIN;
+
+  if (wideSpawnX <= baseSpawnX) {
+    return null;
+  }
+
+  const minGap = PIPE_SPAWN_INTERVAL * pipeSpeed;
+  const maxTargetX = wideSpawnX - OBSTACLE_WIDTH - minGap;
+  const desiredTargetX =
+    baseSpawnX + WIDE_SCREEN_SEED_BLEND * (wideSpawnX - baseSpawnX);
+  const targetXAtFirstSpawn = Math.min(desiredTargetX, maxTargetX);
+
+  return wideSpawnX - (targetXAtFirstSpawn + OBSTACLE_WIDTH);
+}
+
 export class Pipes {
   private pipes: Pipe[] = [];
   private pipeGap = PIPE_GAP;
@@ -45,19 +66,32 @@ export class Pipes {
 
   /** Смещает первый столбец ближе на широких экранах, не ломая базовый ритм спавна. */
   seedInitial(width: number, height: number): void {
-    const baseSpawnX = BASE_WIDTH + PIPE_SPAWN_MARGIN;
-    const wideSpawnX = width + PIPE_SPAWN_MARGIN;
+    const targetXAtFirstSpawn = this.getSeedTargetAtFirstSpawn(width);
 
-    if (wideSpawnX <= baseSpawnX) {
+    if (targetXAtFirstSpawn === null) {
       return;
     }
 
     const firstSpawnFrame = PIPE_START_DELAY + PIPE_SPAWN_INTERVAL;
-    const targetXAtFirstSpawn =
-      baseSpawnX + WIDE_SCREEN_SEED_BLEND * (wideSpawnX - baseSpawnX);
     const seedX = targetXAtFirstSpawn + firstSpawnFrame * this.pipeSpeed;
 
     this.pipes.push(this.createPipe(height, seedX));
+  }
+
+  private getHorizontalPipeSpacing(): number {
+    return PIPE_SPAWN_INTERVAL * this.pipeSpeed;
+  }
+
+  private getSeedTargetAtFirstSpawn(width: number): number | null {
+    const gap = getSeedGapAtFirstSpawn(width, this.pipeSpeed);
+
+    if (gap === null) {
+      return null;
+    }
+
+    const wideSpawnX = width + PIPE_SPAWN_MARGIN;
+
+    return wideSpawnX - OBSTACLE_WIDTH - gap;
   }
 
   update(
@@ -80,8 +114,13 @@ export class Pipes {
         (this.spawnFrames - PIPE_START_DELAY) / PIPE_SPAWN_INTERVAL,
       );
 
+      const spacing = this.getHorizontalPipeSpacing();
+
       for (let i = previousInterval; i < currentInterval; i++) {
-        this.pipes.push(this.createPipe(height, width + PIPE_SPAWN_MARGIN));
+        const spawnOffset = (currentInterval - 1 - i) * spacing;
+        this.pipes.push(
+          this.createPipe(height, width + PIPE_SPAWN_MARGIN + spawnOffset),
+        );
       }
     }
 

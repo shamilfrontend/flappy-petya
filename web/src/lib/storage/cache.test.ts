@@ -1,11 +1,9 @@
 import {
   getCacheLeaderboard,
-  getCacheLocalRecords,
   getCacheProfile,
   isLeaderboardCacheLoading,
   isStorageCacheReady,
   setCacheLeaderboard,
-  setCacheLocalRecords,
   setCacheProfile,
   setLeaderboardCacheLoading,
   setStorageCacheReady,
@@ -15,7 +13,6 @@ import { createDefaultProfile } from './types';
 describe('storage cache', () => {
   beforeEach(() => {
     setCacheProfile(createDefaultProfile());
-    setCacheLocalRecords([]);
     setStorageCacheReady(false);
     setLeaderboardCacheLoading(false);
     setCacheLeaderboard('easy', []);
@@ -29,14 +26,6 @@ describe('storage cache', () => {
     setCacheProfile(profile);
 
     expect(getCacheProfile()).toEqual(profile);
-  });
-
-  it('stores and returns local records', () => {
-    const records = [{ name: 'Alice', level: 'easy' as const, score: 10 }];
-
-    setCacheLocalRecords(records);
-
-    expect(getCacheLocalRecords()).toEqual(records);
   });
 
   it('stores and returns leaderboard by level', () => {

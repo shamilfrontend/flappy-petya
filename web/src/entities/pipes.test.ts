@@ -4,12 +4,13 @@ import {
   OBSTACLE_WIDTH,
   PIPE_SPAWN_INTERVAL,
   PIPE_SPAWN_MARGIN,
+  PIPE_SPEED,
   PIPE_START_DELAY,
 } from '../game/config';
 import { DIFFICULTIES } from '../game/difficulty';
 import { drawObstacle } from '../graphics/environment';
 import { Goose } from './goose';
-import { Pipes } from './pipes';
+import { getSeedGapAtFirstSpawn, Pipes } from './pipes';
 
 vi.mock('../graphics/environment', () => ({
   drawObstacle: vi.fn(),
@@ -200,5 +201,15 @@ describe('Pipes', () => {
 
     expect(drawObstacle).toHaveBeenCalled();
     expect(vi.mocked(drawObstacle).mock.calls.length % 2).toBe(0);
+  });
+
+  it('keeps minimum horizontal gap between seed and first spawn on wide screens', () => {
+    const minGap = PIPE_SPAWN_INTERVAL * PIPE_SPEED;
+
+    for (const screenWidth of [340, 360, 375, 390, 400, 640, 1000]) {
+      expect(getSeedGapAtFirstSpawn(screenWidth)).toBeGreaterThanOrEqual(minGap);
+    }
+
+    expect(getSeedGapAtFirstSpawn(BASE_WIDTH)).toBeNull();
   });
 });

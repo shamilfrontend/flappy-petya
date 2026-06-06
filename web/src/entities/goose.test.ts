@@ -109,6 +109,18 @@ describe('Goose', () => {
     expect(goose.y).toBeGreaterThan(0);
   });
 
+  it('tumbles on score screen after death', () => {
+    const goose = new Goose();
+    goose.y = 200;
+    goose.velocity = 2;
+    goose.rotation = 0;
+
+    goose.update(GAME_STATES.Score, height, fgHeight, 0, 1);
+
+    expect(goose.rotation).toBeGreaterThan(0);
+    expect(goose.y).toBeGreaterThan(200);
+  });
+
   it('draws current animation frame sprite', () => {
     const goose = new Goose();
     const img = new Image();

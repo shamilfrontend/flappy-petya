@@ -5,8 +5,13 @@ vi.mock('../firebase/app', () => ({
 }));
 
 vi.mock('../firebase/auth', () => ({
-  ensureAnonymousAuth: vi.fn(),
+  initAuth: vi.fn(),
+  waitForAuthReady: vi.fn(),
   getCurrentUid: vi.fn(() => null),
+  getAuthDisplayName: vi.fn(() => ''),
+  isUserAuthenticated: vi.fn(() => false),
+  signInWithGoogle: vi.fn(),
+  signOutUser: vi.fn(),
 }));
 
 import {
@@ -21,39 +26,36 @@ import {
   saveSelectedDifficulty,
 } from './index';
 import {
-  setCacheLocalRecords,
+  setCacheLeaderboard,
   setCacheProfile,
   setStorageCacheReady,
 } from './cache';
 import { createDefaultProfile } from './types';
 
-describe('storage index (local mode)', () => {
+describe('storage index (offline mode)', () => {
   beforeEach(async () => {
     localStorage.clear();
     setCacheProfile(createDefaultProfile());
-    setCacheLocalRecords([]);
     setStorageCacheReady(false);
     await initStorage();
   });
 
-  it('marks storage ready after local hydration', () => {
+  it('marks storage ready after hydration', () => {
     expect(isStorageReady()).toBe(true);
   });
 
-  it('hydrates player name from localStorage on init', async () => {
-    localStorage.setItem('flappy-petya-player-name', 'Петя');
+  it('starts with empty profile in offline mode', async () => {
     setStorageCacheReady(false);
 
     await initStorage();
 
-    expect(getSavedPlayerName()).toBe('Петя');
+    expect(getSavedPlayerName()).toBe('');
   });
 
-  it('saves player name to cache and localStorage', () => {
+  it('saves player name to cache', () => {
     savePlayerName('  Петя  ');
 
     expect(getSavedPlayerName()).toBe('Петя');
-    expect(localStorage.getItem('flappy-petya-player-name')).toBe('Петя');
   });
 
   it('ignores empty player name', () => {
@@ -75,20 +77,20 @@ describe('storage index (local mode)', () => {
     expect(getPersonalBest('Петя', 'easy')).toBe(15);
   });
 
-  it('returns personal best from local records for other players', () => {
-    saveRecord('Alice', 'hard', 42);
+  it('returns personal best from leaderboard cache for other players', () => {
+    savePlayerName('Петя');
+    setCacheLeaderboard('hard', [
+      { name: 'Alice', level: 'hard', score: 42 },
+    ]);
 
     expect(getPersonalBest('Alice', 'hard')).toBe(42);
   });
 
-  it('merges local and profile records for leaderboard', () => {
+  it('shows current player records from profile cache', () => {
     savePlayerName('Петя');
     saveRecord('Петя', 'easy', 20);
-    saveRecord('Alice', 'easy', 30);
-    saveRecord('Alice', 'easy', 25);
 
     expect(getTopRecordsByLevel('easy')).toEqual([
-      { name: 'Alice', level: 'easy', score: 30 },
       { name: 'Петя', level: 'easy', score: 20 },
     ]);
   });
@@ -96,18 +98,23 @@ describe('storage index (local mode)', () => {
   it('ignores invalid saveRecord input', () => {
     saveRecord('', 'easy', 10);
     saveRecord('Alice', 'easy', 0);
+    saveRecord('Alice', 'easy', 10000);
 
     expect(getTopRecordsByLevel('easy')).toEqual([]);
   });
 
-  it('updates profile bests only for other player names', () => {
+  it('reports no pending firebase sync in offline mode', async () => {
+    const { isFirebaseSyncPending } = await import('./index');
+
+    expect(isFirebaseSyncPending()).toBe(false);
+  });
+
+  it('does not update profile bests for other player names', () => {
     savePlayerName('Петя');
     saveRecord('Alice', 'medium', 12);
 
     expect(getPersonalBest('Петя', 'medium')).toBe(0);
-    expect(getTopRecordsByLevel('medium')).toEqual([
-      { name: 'Alice', level: 'medium', score: 12 },
-    ]);
+    expect(getTopRecordsByLevel('medium')).toEqual([]);
   });
 
   it('syncs profile name and bests when profile name is empty', () => {
@@ -129,17 +136,36 @@ describe('storage index (local mode)', () => {
     ]);
   });
 
-  it('uses saved player name when profile name is empty in leaderboard', () => {
-    localStorage.setItem('flappy-petya-player-name', 'Петя');
-    saveRecord('Петя', 'easy', 5);
-    setCacheLocalRecords([]);
+  it('hides player in leaderboard when profile name is empty', () => {
     setCacheProfile({
       name: '',
       bests: { easy: 5, medium: 0, hard: 0 },
     });
 
+    expect(getTopRecordsByLevel('easy')).toEqual([]);
+  });
+
+  it('does not lower personal best when saving a worse score', () => {
+    savePlayerName('Петя');
+    saveRecord('Петя', 'easy', 49);
+    saveRecord('Петя', 'easy', 13);
+
+    expect(getPersonalBest('Петя', 'easy')).toBe(49);
     expect(getTopRecordsByLevel('easy')).toEqual([
-      { name: 'Петя', level: 'easy', score: 5 },
+      { name: 'Петя', level: 'easy', score: 49 },
+    ]);
+  });
+
+  it('uses profile bests as source of truth for current player', () => {
+    savePlayerName('Петя');
+    setCacheProfile({
+      name: 'Петя',
+      bests: { easy: 49, medium: 0, hard: 0 },
+    });
+
+    expect(getPersonalBest('Петя', 'easy')).toBe(49);
+    expect(getTopRecordsByLevel('easy')).toEqual([
+      { name: 'Петя', level: 'easy', score: 49 },
     ]);
   });
 });

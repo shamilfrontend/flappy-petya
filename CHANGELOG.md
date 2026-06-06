@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.0
+
 ### Added
 
 - PWA service worker (vite-plugin-pwa) с кэшированием shell и ассетов
@@ -10,11 +12,20 @@
 - Capacitor Haptics на нативных платформах (fallback на `navigator.vibrate`)
 - Доступность canvas: `role`, `aria-label`, `tabIndex`
 - Экран «Настройки» с переключателями звука и вибрации
+- Анимации: death tumble, screen shake, пульс countdown
+- Индикатор синхронизации лидерборда («Обновление...»)
+
+### Fixed
+
+- Рекорд не появлялся после игры (пауза, вкладка, Firebase merge)
+- Таблица рекордов не мигала «Загрузка...» при наличии локальных данных
 
 ### Changed
 
 - Кнопка mute на splash заменена экраном настроек
 - `npm run check` теперь запускает `test:coverage` (как CI)
+- Клиентская валидация score (1–9999) перед отправкой в Firebase
+- Firebase refresh объединяет remote и локальные рекорды
 
 ## 1.1.0
 

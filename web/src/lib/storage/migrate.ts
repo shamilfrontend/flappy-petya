@@ -1,25 +1,60 @@
 import type { Firestore } from 'firebase/firestore';
 import type { DifficultyLevel } from '../../game/difficulty';
 import {
-  getLocalPersonalBest,
-  getLocalPlayerName,
-  getLocalRecords,
-} from './local';
-import {
   buildProfileFromLocal,
   fetchPlayerProfile,
   savePlayerProfile,
 } from './player-store';
 import { upsertLeaderboardEntry } from './records-store';
-import { createEmptyBests, type PlayerProfile } from './types';
+import {
+  createEmptyBests,
+  type GameRecord,
+  type PlayerProfile,
+} from './types';
 
-function collectLocalBests(name: string): Record<DifficultyLevel, number> {
+const LEGACY_RECORDS_KEY = 'flappy-petya-records';
+
+function isGameRecord(value: unknown): value is GameRecord {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const record = value as Partial<GameRecord>;
+  return (
+    typeof record.name === 'string'
+    && typeof record.level === 'string'
+    && typeof record.score === 'number'
+    && record.score >= 0
+  );
+}
+
+function getLegacyLocalRecords(): GameRecord[] {
+  try {
+    const raw = localStorage.getItem(LEGACY_RECORDS_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter(isGameRecord);
+  } catch {
+    return [];
+  }
+}
+
+function collectLegacyBests(name: string): Record<DifficultyLevel, number> {
   const bests = createEmptyBests();
-  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
+  const trimmedName = name.trim();
 
-  levels.forEach((level) => {
-    bests[level] = getLocalPersonalBest(name, level);
-  });
+  getLegacyLocalRecords()
+    .filter((record) => record.name === trimmedName)
+    .forEach((record) => {
+      bests[record.level] = Math.max(bests[record.level], record.score);
+    });
 
   return bests;
 }
@@ -27,35 +62,36 @@ function collectLocalBests(name: string): Record<DifficultyLevel, number> {
 export async function migrateLocalDataToFirestore(
   db: Firestore,
   uid: string,
+  displayName: string,
 ): Promise<PlayerProfile> {
   const existingProfile = await fetchPlayerProfile(db, uid);
   if (existingProfile?.name) {
     return existingProfile;
   }
 
-  const localName = getLocalPlayerName();
+  const trimmedName = displayName.trim();
   const profile = buildProfileFromLocal(
-    localName,
-    localName ? collectLocalBests(localName) : createEmptyBests(),
+    trimmedName,
+    trimmedName ? collectLegacyBests(trimmedName) : createEmptyBests(),
   );
 
   await savePlayerProfile(db, uid, profile);
 
-  if (!localName) {
+  if (!trimmedName) {
     return profile;
   }
 
-  const localRecords = getLocalRecords().filter(
-    (record) => record.name === localName,
+  const legacyRecords = getLegacyLocalRecords().filter(
+    (record) => record.name === trimmedName,
   );
 
   await Promise.all(
-    localRecords.map((record) =>
+    legacyRecords.map((record) =>
       upsertLeaderboardEntry(
         db,
         uid,
         record.level,
-        localName,
+        trimmedName,
         record.score,
       ),
     ),

@@ -428,14 +428,21 @@ export function drawCountdown(
   centerX: number,
   y: number,
   step: number,
+  progress = 0,
 ): void {
   const label = COUNTDOWN_LABELS[Math.min(step, COUNTDOWN_LABELS.length - 1)] ?? '3';
+  const clampedProgress = Math.min(Math.max(progress, 0), 1);
+  const scale = 1 + 0.2 * (1 - clampedProgress);
 
-  drawOutlinedText(ctx, label, centerX, y, {
+  ctx.save();
+  ctx.translate(centerX, y);
+  ctx.scale(scale, scale);
+  drawOutlinedText(ctx, label, 0, 0, {
     font: 'bold 56px system-ui, sans-serif',
     fill: THEME.accent,
     strokeWidth: 4,
   });
+  ctx.restore();
 }
 
 export function measureButton(
@@ -515,20 +522,14 @@ function drawUserIcon(
 }
 
 export function measurePlayerNameButton(
-  ctx: CanvasRenderingContext2D,
-  name: string,
+  _ctx: CanvasRenderingContext2D,
+  _name: string,
+  viewportWidth: number,
 ): ButtonRect {
-  const iconSlot = USER_ICON_SIZE + USER_ICON_TEXT_GAP;
-
-  ctx.save();
-  ctx.font = BUTTON_FONT;
-  const textWidth = ctx.measureText(name).width;
-  ctx.restore();
-
   return {
     x: 0,
     y: 0,
-    width: BUTTON_PADDING_X * 2 + iconSlot + textWidth,
+    width: getRecordsPanelWidth(viewportWidth),
     height: 36 + BUTTON_PADDING_Y,
   };
 }
@@ -549,18 +550,22 @@ export function drawPlayerNameButton(
   const centerY = rect.y + rect.height / 2;
   const iconColor = THEME.outline;
 
+  const iconSlot = USER_ICON_SIZE + USER_ICON_TEXT_GAP;
+  const maxTextWidth = rect.width - BUTTON_PADDING_X * 2 - iconSlot;
+
   ctx.save();
   ctx.font = BUTTON_FONT;
-  const textWidth = ctx.measureText(name).width;
-  const contentWidth = USER_ICON_SIZE + USER_ICON_TEXT_GAP + textWidth;
+  const displayName = truncateText(ctx, name, maxTextWidth);
+  const textWidth = ctx.measureText(displayName).width;
+  const contentWidth = iconSlot + textWidth;
   const startX = rect.x + (rect.width - contentWidth) / 2;
 
   drawUserIcon(ctx, startX + USER_ICON_SIZE / 2, centerY, USER_ICON_SIZE);
 
   drawOutlinedText(
     ctx,
-    name,
-    startX + USER_ICON_SIZE + USER_ICON_TEXT_GAP + textWidth / 2,
+    displayName,
+    startX + iconSlot + textWidth / 2,
     centerY,
     {
       font: BUTTON_FONT,
@@ -657,6 +662,7 @@ export function drawRecordsTable(
   viewportWidth: number,
   isLoading = false,
   highlightName = '',
+  isSyncing = false,
 ): void {
   const panelW = getRecordsPanelWidth(viewportWidth);
   const panelX = centerX - panelW / 2;
@@ -740,6 +746,19 @@ export function drawRecordsTable(
     ctx.textAlign = 'right';
     ctx.fillText(record.score.toString(), colScoreX, rowY);
   });
+
+  if (isSyncing) {
+    ctx.textAlign = 'center';
+    ctx.font = `${Math.max(fontSize - 2, 11)}px system-ui, sans-serif`;
+    ctx.fillStyle = THEME.outline;
+    ctx.globalAlpha = 0.7;
+    ctx.fillText(
+      'Обновление...',
+      centerX,
+      startY + panelH + 14,
+    );
+    ctx.globalAlpha = 1;
+  }
 
   ctx.restore();
 }

@@ -5,8 +5,13 @@ const firebaseMocks = vi.hoisted(() => ({
 }));
 
 const authMocks = vi.hoisted(() => ({
-  ensureAnonymousAuth: vi.fn(() => Promise.resolve('uid-1')),
+  initAuth: vi.fn(),
+  waitForAuthReady: vi.fn(() => Promise.resolve()),
   getCurrentUid: vi.fn(() => 'uid-1'),
+  getAuthDisplayName: vi.fn(() => 'Петя'),
+  isUserAuthenticated: vi.fn(() => true),
+  signInWithGoogle: vi.fn(),
+  signOutUser: vi.fn(() => Promise.resolve()),
 }));
 
 const playerStoreMocks = vi.hoisted(() => ({
@@ -35,7 +40,6 @@ vi.mock('./records-store', () => recordsStoreMocks);
 vi.mock('./migrate', () => migrateMocks);
 
 import {
-  setCacheLocalRecords,
   setCacheProfile,
   setLeaderboardCacheLoading,
   setStorageCacheReady,
@@ -48,7 +52,6 @@ async function loadStorageModule() {
 
 function resetStorageCache(): void {
   setCacheProfile(createDefaultProfile());
-  setCacheLocalRecords([]);
   setStorageCacheReady(false);
   setLeaderboardCacheLoading(false);
 }
@@ -63,11 +66,15 @@ describe('storage index (firebase mode)', () => {
     vi.clearAllMocks();
     firebaseMocks.isFirebaseEnabled.mockReturnValue(true);
     firebaseMocks.getFirestoreDb.mockReturnValue(db);
-    authMocks.ensureAnonymousAuth.mockResolvedValue('uid-1');
     authMocks.getCurrentUid.mockReturnValue('uid-1');
+    authMocks.getAuthDisplayName.mockReturnValue('Петя');
+    authMocks.isUserAuthenticated.mockReturnValue(true);
     playerStoreMocks.fetchPlayerProfile.mockResolvedValue(null);
     playerStoreMocks.updatePlayerName.mockImplementation(
-      async (_db, _uid, name: string) => createDefaultProfile(name),
+      async (_db, _uid, name: string, currentProfile) => ({
+        ...currentProfile,
+        name,
+      }),
     );
     playerStoreMocks.updatePlayerBest.mockImplementation(
       async (_db, _uid, level, score, profile) => ({
@@ -93,10 +100,11 @@ describe('storage index (firebase mode)', () => {
 
     expect(isStorageReady()).toBe(true);
     expect(firebaseMocks.initFirebaseApp).toHaveBeenCalled();
-    expect(authMocks.ensureAnonymousAuth).toHaveBeenCalled();
+    expect(authMocks.initAuth).toHaveBeenCalled();
+    expect(authMocks.waitForAuthReady).toHaveBeenCalled();
   });
 
-  it('migrates local data when profile has no name', async () => {
+  it('migrates legacy data when profile has no name', async () => {
     const { initStorage } = await loadStorageModule();
 
     await initStorage();
@@ -104,6 +112,7 @@ describe('storage index (firebase mode)', () => {
     expect(migrateMocks.migrateLocalDataToFirestore).toHaveBeenCalledWith(
       db,
       'uid-1',
+      'Петя',
     );
   });
 
@@ -118,6 +127,19 @@ describe('storage index (firebase mode)', () => {
 
     expect(migrateMocks.migrateLocalDataToFirestore).not.toHaveBeenCalled();
     expect(recordsStoreMocks.upsertLeaderboardEntry).toHaveBeenCalledTimes(3);
+  });
+
+  it('uses firebase profile bests as source of truth on init', async () => {
+    playerStoreMocks.fetchPlayerProfile.mockResolvedValue({
+      name: 'Петя',
+      bests: { easy: 49, medium: 0, hard: 0 },
+    });
+    const { initStorage, getPersonalBest } = await loadStorageModule();
+
+    await initStorage();
+
+    expect(playerStoreMocks.savePlayerProfile).not.toHaveBeenCalled();
+    expect(getPersonalBest('Петя', 'easy')).toBe(49);
   });
 
   it('loads leaderboards for all difficulty levels on init', async () => {
@@ -194,7 +216,7 @@ describe('storage index (firebase mode)', () => {
     expect(isLeaderboardLoading()).toBe(false);
   });
 
-  it('shows local records when firestore db is unavailable', async () => {
+  it('shows profile cache when firestore db is unavailable', async () => {
     firebaseMocks.getFirestoreDb.mockReturnValue(null as never);
     const { initStorage, savePlayerName, saveRecord, getTopRecordsByLevel } =
       await loadStorageModule();
@@ -293,5 +315,60 @@ describe('storage index (firebase mode)', () => {
         expect.objectContaining({ selectedDifficulty: 'hard' }),
       );
     });
+  });
+
+  it('reports pending sync while firebase tasks are queued', async () => {
+    recordsStoreMocks.upsertLeaderboardEntry.mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const {
+      initStorage,
+      savePlayerName,
+      saveRecord,
+      isFirebaseSyncPending,
+    } = await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+    saveRecord('Петя', 'easy', 5);
+
+    await vi.waitFor(() => {
+      expect(isFirebaseSyncPending()).toBe(true);
+    });
+  });
+
+  it('merges profile bests when refreshing leaderboard', async () => {
+    const {
+      initStorage,
+      refreshLeaderboard,
+      getTopRecordsByLevel,
+    } = await loadStorageModule();
+    const { setCacheProfile: setProfile } = await import('./cache');
+    await initStorage();
+    setProfile({
+      name: 'Петя',
+      bests: { easy: 15, medium: 0, hard: 0 },
+    });
+    recordsStoreMocks.fetchLeaderboard.mockResolvedValue([]);
+    await refreshLeaderboard('easy');
+
+    expect(getTopRecordsByLevel('easy')).toEqual(
+      expect.arrayContaining([{ name: 'Петя', level: 'easy', score: 15 }]),
+    );
+  });
+
+  it('rejects scores above MAX_VALID_SCORE', async () => {
+    const { initStorage, savePlayerName, saveRecord, getTopRecordsByLevel } =
+      await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+    recordsStoreMocks.upsertLeaderboardEntry.mockClear();
+    saveRecord('Петя', 'easy', 10000);
+
+    expect(
+      getTopRecordsByLevel('easy').find((record) => record.name === 'Петя'),
+    ).toBeUndefined();
+    expect(recordsStoreMocks.upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
 });
