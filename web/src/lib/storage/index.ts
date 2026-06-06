@@ -328,7 +328,9 @@ function ensureCurrentPlayerVisible(
   level: DifficultyLevel,
   limit: number,
 ): GameRecord[] {
-  const trimmedName = getCacheProfile().name.trim();
+  const trimmedName =
+    getCacheProfile().name.trim() || getSavedPlayerName().trim();
+
   if (!trimmedName) {
     return records.slice(0, limit);
   }
@@ -399,9 +401,14 @@ export function saveRecord(
   setCacheLocalRecords(localRecords);
 
   const profile = getCacheProfile();
-  if (profile.name === trimmedName) {
+  const profileName = profile.name.trim();
+  const isCurrentPlayer =
+    profileName === trimmedName || profileName.length === 0;
+
+  if (isCurrentPlayer) {
     setCacheProfile({
       ...profile,
+      name: profileName.length === 0 ? trimmedName : profile.name,
       bests: {
         ...profile.bests,
         [level]: Math.max(profile.bests[level], score),

@@ -129,6 +129,7 @@ export class Game {
   private isNewBest = false;
   private fgScrollSpeed = getDifficultyById(DIFFICULTY_LEVELS.Medium).fgScrollSpeed;
   private hasSavedCurrentScore = false;
+  private lastScoredLevel: DifficultyLevel | undefined;
   private lastFrameTime = 0;
   start(): void {
     this.canvas = document.createElement('canvas');
@@ -369,7 +370,8 @@ export class Game {
         }
 
         if (isPointInRect(point, this.recordsBtn)) {
-          this.recordsLevelTab = this.selectedDifficulty;
+          this.recordsLevelTab =
+            this.lastScoredLevel ?? this.selectedDifficulty;
           this.currentState = GAME_STATES.Records;
           void refreshLeaderboard(this.recordsLevelTab);
           break;
@@ -574,12 +576,20 @@ export class Game {
     ) {
       this.fgpos =
         (this.fgpos - this.fgScrollSpeed * dt) % FG_TILE_WIDTH;
-    } else if (!this.hasSavedCurrentScore) {
+    }
+
+    if (this.currentState === GAME_STATES.Score && !this.hasSavedCurrentScore) {
       this.isNewBest = this.score > this.personalBest;
-      saveRecord(this.playerName, this.selectedDifficulty, this.score);
+
+      if (this.score > 0 && this.playerName.trim()) {
+        saveRecord(this.playerName, this.selectedDifficulty, this.score);
+        this.lastScoredLevel = this.selectedDifficulty;
+      }
+
       if (this.isNewBest) {
         this.sound.play(SOUND_EVENTS.NewBest);
       }
+
       this.personalBest = Math.max(this.personalBest, this.score);
       this.hasSavedCurrentScore = true;
     }

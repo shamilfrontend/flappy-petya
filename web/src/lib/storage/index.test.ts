@@ -100,13 +100,46 @@ describe('storage index (local mode)', () => {
     expect(getTopRecordsByLevel('easy')).toEqual([]);
   });
 
-  it('updates profile bests only for matching player name', () => {
+  it('updates profile bests only for other player names', () => {
     savePlayerName('Петя');
     saveRecord('Alice', 'medium', 12);
 
     expect(getPersonalBest('Петя', 'medium')).toBe(0);
     expect(getTopRecordsByLevel('medium')).toEqual([
       { name: 'Alice', level: 'medium', score: 12 },
+    ]);
+  });
+
+  it('syncs profile name and bests when profile name is empty', () => {
+    saveRecord('Петя', 'easy', 12);
+
+    expect(getPersonalBest('Петя', 'easy')).toBe(12);
+    expect(getSavedPlayerName()).toBe('Петя');
+    expect(getTopRecordsByLevel('easy')).toEqual([
+      { name: 'Петя', level: 'easy', score: 12 },
+    ]);
+  });
+
+  it('shows player in easy leaderboard after savePlayerName and saveRecord', () => {
+    savePlayerName('Петя');
+    saveRecord('Петя', 'easy', 17);
+
+    expect(getTopRecordsByLevel('easy')).toEqual([
+      { name: 'Петя', level: 'easy', score: 17 },
+    ]);
+  });
+
+  it('uses saved player name when profile name is empty in leaderboard', () => {
+    localStorage.setItem('flappy-petya-player-name', 'Петя');
+    saveRecord('Петя', 'easy', 5);
+    setCacheLocalRecords([]);
+    setCacheProfile({
+      name: '',
+      bests: { easy: 5, medium: 0, hard: 0 },
+    });
+
+    expect(getTopRecordsByLevel('easy')).toEqual([
+      { name: 'Петя', level: 'easy', score: 5 },
     ]);
   });
 });

@@ -144,6 +144,8 @@ interface GamePrivate {
   personalBest: number;
   isNewBest: boolean;
   selectedDifficulty: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS];
+  recordsLevelTab: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS];
+  lastScoredLevel: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS] | undefined;
   goose: { velocity: number; y: number };
   onPress: (evt: MouseEvent) => void;
   onResize: () => void;
@@ -544,6 +546,69 @@ describe('Game', () => {
     expect(internals.personalBest).toBe(12);
     expect(saveRecord).toHaveBeenCalledWith('Петя', DIFFICULTY_LEVELS.Medium, 12);
     expect(soundMocks.play).toHaveBeenCalledWith('newBest');
+  });
+
+  it('does not save score while paused', async () => {
+    const game = await startActiveGame();
+    const internals = accessGame(game);
+    internals.score = 5;
+    internals.currentState = GAME_STATES.Paused;
+
+    runUpdate(game, 1);
+
+    expect(saveRecord).not.toHaveBeenCalled();
+  });
+
+  it('saves final score once after pause and game over', async () => {
+    const game = await startActiveGame();
+    const internals = accessGame(game);
+    internals.score = 3;
+    internals.currentState = GAME_STATES.Paused;
+
+    runUpdate(game, 1);
+
+    expect(saveRecord).not.toHaveBeenCalled();
+
+    internals.currentState = GAME_STATES.Score;
+    internals.score = 10;
+    internals.hasSavedCurrentScore = false;
+
+    runUpdate(game, 1);
+
+    expect(saveRecord).toHaveBeenCalledWith('Петя', DIFFICULTY_LEVELS.Medium, 10);
+    expect(saveRecord).toHaveBeenCalledOnce();
+  });
+
+  it('saves score after pause at zero when game ends with points', async () => {
+    const game = await startActiveGame();
+    const internals = accessGame(game);
+    internals.score = 0;
+    internals.currentState = GAME_STATES.Paused;
+
+    runUpdate(game, 1);
+
+    expect(saveRecord).not.toHaveBeenCalled();
+
+    internals.currentState = GAME_STATES.Score;
+    internals.score = 5;
+    internals.hasSavedCurrentScore = false;
+
+    runUpdate(game, 1);
+
+    expect(saveRecord).toHaveBeenCalledWith('Петя', DIFFICULTY_LEVELS.Medium, 5);
+  });
+
+  it('opens records on last scored level tab', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.selectedDifficulty = DIFFICULTY_LEVELS.Medium;
+    internals.lastScoredLevel = DIFFICULTY_LEVELS.Easy;
+    getCanvasPointMock.mockReturnValueOnce(centerOf(internals.recordsBtn));
+
+    press(game);
+
+    expect(internals.recordsLevelTab).toBe(DIFFICULTY_LEVELS.Easy);
+    expect(refreshLeaderboard).toHaveBeenCalledWith(DIFFICULTY_LEVELS.Easy);
   });
 
   it('shows alert and exits when canvas 2d context is unavailable', () => {
