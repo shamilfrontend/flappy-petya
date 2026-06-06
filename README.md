@@ -34,7 +34,7 @@ npm run preview -w flappy-petya-web
 
 ## Android (Capacitor)
 
-Требуется [Android Studio](https://developer.android.com/studio) и JDK 17+.
+Требуется [Android Studio](https://developer.android.com/studio) и JDK 21+ (см. `android/app/capacitor.build.gradle`).
 
 ```bash
 # Сборка web с относительными путями + синхронизация в android/

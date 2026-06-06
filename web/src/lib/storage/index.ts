@@ -314,25 +314,75 @@ function mergeTopRecords(
   return deduplicateLeaderboardByName(combined);
 }
 
+function getLocalLeaderboardSources(level: DifficultyLevel): GameRecord[][] {
+  const localRecords = getCacheLocalRecords().filter(
+    (record) => record.level === level,
+  );
+  const profileRecords = getProfileLeaderboardRecords(getCacheProfile());
+
+  return [localRecords, profileRecords];
+}
+
+function ensureCurrentPlayerVisible(
+  records: GameRecord[],
+  level: DifficultyLevel,
+  limit: number,
+): GameRecord[] {
+  const trimmedName = getCacheProfile().name.trim();
+  if (!trimmedName) {
+    return records.slice(0, limit);
+  }
+
+  const top = records.slice(0, limit);
+  const playerInTop = top.some(
+    (record) => record.name === trimmedName && record.level === level,
+  );
+
+  if (playerInTop) {
+    return top;
+  }
+
+  const playerBest = Math.max(
+    getCacheProfile().bests[level] ?? 0,
+    getLocalPersonalBest(trimmedName, level),
+  );
+
+  if (playerBest <= 0) {
+    return top;
+  }
+
+  const playerRecord: GameRecord = {
+    name: trimmedName,
+    level,
+    score: playerBest,
+  };
+
+  if (top.length < limit) {
+    return deduplicateLeaderboardByName([...top, playerRecord], limit);
+  }
+
+  return deduplicateLeaderboardByName(
+    [...top.slice(0, limit - 1), playerRecord],
+    limit,
+  );
+}
+
 export function getTopRecordsByLevel(
   level: DifficultyLevel,
   limit = TOP_RECORDS_PER_LEVEL,
 ): GameRecord[] {
-  if (!isFirebaseEnabled()) {
-    const localRecords = getCacheLocalRecords().filter(
-      (record) => record.level === level,
-    );
-    const profileRecords = getProfileLeaderboardRecords(getCacheProfile());
+  const sources = getLocalLeaderboardSources(level);
 
-    return mergeTopRecords(level, localRecords, profileRecords).slice(0, limit);
+  if (isFirebaseEnabled()) {
+    const leaderboard = getCacheLeaderboard(level);
+    if (leaderboard !== undefined) {
+      sources.unshift(leaderboard);
+    }
   }
 
-  const leaderboard = getCacheLeaderboard(level);
-  if (leaderboard === undefined) {
-    return [];
-  }
+  const merged = mergeTopRecords(level, ...sources);
 
-  return deduplicateLeaderboardByName(leaderboard, limit);
+  return ensureCurrentPlayerVisible(merged, level, limit);
 }
 
 export function saveRecord(

@@ -92,6 +92,8 @@ interface GamePrivate {
   currentState: typeof GAME_STATES[keyof typeof GAME_STATES];
   score: number;
   playerName: string;
+  hasSavedCurrentScore: boolean;
+  personalBest: number;
   selectedDifficulty: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS];
   goose: { velocity: number; y: number };
   onPress: (evt: MouseEvent) => void;
@@ -374,5 +376,76 @@ describe('Game', () => {
     }
 
     expect(internals.currentState).toBe(GAME_STATES.Score);
+  });
+
+  it('edits player name from splash screen', async () => {
+    const game = await startGame('Петя');
+    nameInputPrompt.mockResolvedValueOnce({ name: 'Вася', confirmed: true });
+    getCanvasPointMock.mockReturnValue({ x: 160, y: 389 });
+
+    press(game);
+
+    await vi.waitFor(() => {
+      expect(accessGame(game).playerName).toBe('Вася');
+    });
+
+    expect(nameInputPrompt).toHaveBeenCalledWith('Петя', { submitLabel: 'Сохранить' });
+    expect(savePlayerName).toHaveBeenCalledWith('Вася');
+  });
+
+  it('keeps player name when edit prompt is cancelled', async () => {
+    const game = await startGame('Петя');
+    nameInputPrompt.mockResolvedValueOnce({ name: 'Вася', confirmed: false });
+    getCanvasPointMock.mockReturnValue({ x: 160, y: 389 });
+
+    press(game);
+
+    await vi.waitFor(() => {
+      expect(nameInputPrompt).toHaveBeenCalled();
+    });
+
+    expect(accessGame(game).playerName).toBe('Петя');
+    expect(savePlayerName).not.toHaveBeenCalledWith('Вася');
+  });
+
+  it('switches records tab and refreshes leaderboard', async () => {
+    const game = await startGame();
+    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 337 });
+    press(game);
+    vi.mocked(refreshLeaderboard).mockClear();
+    getCanvasPointMock.mockReturnValueOnce({ x: 53, y: 85 });
+
+    press(game);
+
+    expect(accessGame(game).currentState).toBe(GAME_STATES.Records);
+    expect(refreshLeaderboard).toHaveBeenCalledWith(DIFFICULTY_LEVELS.Easy);
+  });
+
+  it('ignores score screen retry when click misses ok button', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Score;
+    internals.score = 5;
+    getCanvasPointMock.mockReturnValue({ x: 10, y: 10 });
+
+    press(game);
+
+    expect(internals.currentState).toBe(GAME_STATES.Score);
+    expect(internals.score).toBe(5);
+  });
+
+  it('updates personal best on score screen', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Score;
+    internals.score = 12;
+    internals.personalBest = 5;
+    internals.hasSavedCurrentScore = false;
+    storageMocks.getPersonalBest.mockReturnValue(12);
+
+    runUpdate(game, 1);
+
+    expect(internals.personalBest).toBe(12);
+    expect(saveRecord).toHaveBeenCalledWith('Петя', DIFFICULTY_LEVELS.Medium, 12);
   });
 });
