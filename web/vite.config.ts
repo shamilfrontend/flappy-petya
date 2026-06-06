@@ -1,10 +1,31 @@
 import { defineConfig } from 'vitest/config';
+import { VitePWA } from 'vite-plugin-pwa';
 
 const isAndroidBuild = process.env.VITE_BUILD_TARGET === 'android';
+const base = isAndroidBuild ? './' : '/flappy-petya/';
 
 export default defineConfig({
-  base: isAndroidBuild ? './' : '/flappy-petya/',
+  base,
   publicDir: 'public',
+  plugins: [
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: [
+        'favicon.ico',
+        'favicon.svg',
+        'favicon-16x16.png',
+        'favicon-32x32.png',
+        'favicon-192x192.png',
+        'favicon-512x512.png',
+        'apple-touch-icon.png',
+        'site.webmanifest',
+      ],
+      manifest: false,
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
+      },
+    }),
+  ],
   test: {
     environment: 'happy-dom',
     globals: true,

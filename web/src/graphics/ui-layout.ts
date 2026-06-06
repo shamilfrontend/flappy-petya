@@ -1,7 +1,13 @@
+import { getRecordsPanelWidth, type ButtonRect } from './ui-text';
+
 export const FOOTER_BUTTON_GAP = 12;
 
 const SPLASH_TAB_HEIGHT = 36;
 const SPLASH_PLAY_GAP = 16;
+const FOOTER_TAB_HEIGHT = 36;
+const FOOTER_TAB_GAP = 6;
+const SETTINGS_ROW_HEIGHT = 44;
+const SETTINGS_TOGGLE_COUNT = 2;
 
 export interface SplashLayout {
   titleY: number;
@@ -9,7 +15,6 @@ export interface SplashLayout {
   difficultyTabsY: number;
   playButtonY: number;
   footerStartY: number;
-  soundButtonY: number;
 }
 
 export interface ScoreLayout {
@@ -27,6 +32,12 @@ export interface RecordsLayout {
   backButtonY: number;
 }
 
+export interface SettingsLayout {
+  titleY: number;
+  panelStartY: number;
+  backButtonY: number;
+}
+
 export function getSplashLayout(height: number): SplashLayout {
   const difficultyTabsY = height * 0.312;
 
@@ -36,8 +47,61 @@ export function getSplashLayout(height: number): SplashLayout {
     difficultyTabsY,
     playButtonY: difficultyTabsY + SPLASH_TAB_HEIGHT + SPLASH_PLAY_GAP,
     footerStartY: height * 0.66,
-    soundButtonY: height * 0.58,
   };
+}
+
+export function layoutSplashFooterButtons(
+  centerX: number,
+  y: number,
+  viewportWidth: number,
+): ButtonRect[] {
+  const panelW = getRecordsPanelWidth(viewportWidth);
+  const panelX = centerX - panelW / 2;
+  const tabWidth = (panelW - FOOTER_TAB_GAP) / 2;
+
+  return [
+    {
+      x: panelX,
+      y,
+      width: tabWidth,
+      height: FOOTER_TAB_HEIGHT,
+    },
+    {
+      x: panelX + tabWidth + FOOTER_TAB_GAP,
+      y,
+      width: tabWidth,
+      height: FOOTER_TAB_HEIGHT,
+    },
+  ];
+}
+
+export function getSettingsLayout(height: number): SettingsLayout {
+  return {
+    titleY: height * 0.08,
+    panelStartY: height * 0.22,
+    backButtonY: height * 0.88,
+  };
+}
+
+export function layoutSettingsToggles(
+  centerX: number,
+  panelStartY: number,
+  viewportWidth: number,
+): ButtonRect[] {
+  const panelW = getRecordsPanelWidth(viewportWidth);
+  const panelX = centerX - panelW / 2;
+  const innerPad = 12;
+
+  return Array.from({ length: SETTINGS_TOGGLE_COUNT }, (_, index) => ({
+    x: panelX + innerPad,
+    y: panelStartY + index * SETTINGS_ROW_HEIGHT,
+    width: panelW - innerPad * 2,
+    height: SETTINGS_ROW_HEIGHT,
+  }));
+}
+
+export function getSettingsPanelHeight(rowCount: number): number {
+  return rowCount * SETTINGS_ROW_HEIGHT;
 }
 
 export function getCountdownY(height: number): number {

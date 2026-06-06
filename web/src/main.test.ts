@@ -1,4 +1,9 @@
 const startMock = vi.hoisted(() => vi.fn());
+const registerSwMock = vi.hoisted(() => vi.fn());
+
+vi.mock('virtual:pwa-register', () => ({
+  registerSW: registerSwMock,
+}));
 
 vi.mock('./game/game', () => ({
   Game: class {

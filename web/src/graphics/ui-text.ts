@@ -289,45 +289,91 @@ export function drawScorePanel(
   return { width: panelW, height: panelH };
 }
 
-const SOUND_BUTTON_SIZE = 40;
+const PAUSE_BUTTON_SIZE = 40;
 
-export function measureSoundButton(): ButtonRect {
+export function measurePauseButton(): ButtonRect {
   return {
     x: 0,
     y: 0,
-    width: SOUND_BUTTON_SIZE,
-    height: SOUND_BUTTON_SIZE,
+    width: PAUSE_BUTTON_SIZE,
+    height: PAUSE_BUTTON_SIZE,
   };
 }
 
-export function drawSoundButton(
+const SETTINGS_ROW_FONT = 'bold 16px system-ui, sans-serif';
+const SETTINGS_SWITCH_WIDTH = 48;
+const SETTINGS_SWITCH_HEIGHT = 26;
+const SETTINGS_SWITCH_KNOB = 20;
+
+export function drawSettingsPanel(
   ctx: CanvasRenderingContext2D,
-  rect: ButtonRect,
-  isMuted: boolean,
+  centerX: number,
+  startY: number,
+  viewportWidth: number,
+  rowCount: number,
 ): void {
+  const panelW = getRecordsPanelWidth(viewportWidth);
+  const panelX = centerX - panelW / 2;
+  const panelH = rowCount * 44;
+
   ctx.fillStyle = THEME.panel;
   ctx.strokeStyle = THEME.panelBorder;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(panelX, startY, panelW, panelH, 10);
+  ctx.fill();
+  ctx.stroke();
+}
+
+export function drawSettingsToggleRow(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  rect: ButtonRect,
+  isOn: boolean,
+  isDisabled = false,
+): void {
+  const centerY = rect.y + rect.height / 2;
+  const switchX = rect.x + rect.width - SETTINGS_SWITCH_WIDTH;
+  const switchY = centerY - SETTINGS_SWITCH_HEIGHT / 2;
+  const labelColor = isDisabled ? THEME.panelBorder : THEME.outline;
+
+  ctx.save();
+  ctx.font = SETTINGS_ROW_FONT;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = labelColor;
+  ctx.fillText(label, rect.x, centerY);
+  ctx.restore();
+
+  if (isDisabled) {
+    ctx.fillStyle = THEME.panelBorder;
+  } else if (isOn) {
+    ctx.fillStyle = THEME.accent;
+  } else {
+    ctx.fillStyle = THEME.panel;
+  }
+  ctx.strokeStyle = isDisabled ? THEME.panelBorder : THEME.outline;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(rect.x, rect.y, rect.width, rect.height, 8);
+  ctx.roundRect(switchX, switchY, SETTINGS_SWITCH_WIDTH, SETTINGS_SWITCH_HEIGHT, 13);
   ctx.fill();
   ctx.stroke();
 
-  drawOutlinedText(
-    ctx,
-    isMuted ? '🔇' : '🔊',
-    rect.x + rect.width / 2,
-    rect.y + rect.height / 2,
-    {
-      font: '20px system-ui, sans-serif',
-      fill: THEME.outline,
-      strokeWidth: 1,
-    },
-  );
-}
+  const knobX = isOn
+    ? switchX + SETTINGS_SWITCH_WIDTH - SETTINGS_SWITCH_KNOB - 3
+    : switchX + 3;
+  const knobY = switchY + (SETTINGS_SWITCH_HEIGHT - SETTINGS_SWITCH_KNOB) / 2;
 
-export function measurePauseButton(): ButtonRect {
-  return measureSoundButton();
+  ctx.fillStyle = isDisabled ? THEME.panel : THEME.text;
+  ctx.beginPath();
+  ctx.arc(
+    knobX + SETTINGS_SWITCH_KNOB / 2,
+    knobY + SETTINGS_SWITCH_KNOB / 2,
+    SETTINGS_SWITCH_KNOB / 2,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
 }
 
 export function drawPauseButton(
@@ -610,6 +656,7 @@ export function drawRecordsTable(
   startY: number,
   viewportWidth: number,
   isLoading = false,
+  highlightName = '',
 ): void {
   const panelW = getRecordsPanelWidth(viewportWidth);
   const panelX = centerX - panelW / 2;
@@ -664,9 +711,30 @@ export function drawRecordsTable(
     return;
   }
 
-  visibleRecords.forEach((record, index) => {
-    const rowY = startY + headerHeight + index * RECORDS_ROW_HEIGHT + RECORDS_ROW_HEIGHT / 2;
+  const trimmedHighlight = highlightName.trim();
 
+  visibleRecords.forEach((record, index) => {
+    const rowTop = startY + headerHeight + index * RECORDS_ROW_HEIGHT;
+    const rowY = rowTop + RECORDS_ROW_HEIGHT / 2;
+    const isHighlighted = trimmedHighlight.length > 0 && record.name === trimmedHighlight;
+
+    if (isHighlighted) {
+      ctx.fillStyle = THEME.accent;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.roundRect(
+        panelX + innerPad / 2,
+        rowTop + 2,
+        panelW - innerPad,
+        RECORDS_ROW_HEIGHT - 4,
+        6,
+      );
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    ctx.fillStyle = THEME.outline;
+    ctx.font = isHighlighted ? `bold ${rowFont}` : rowFont;
     ctx.textAlign = 'left';
     ctx.fillText(truncateText(ctx, record.name, nameMaxWidth), colNameX, rowY);
     ctx.textAlign = 'right';

@@ -11,7 +11,8 @@ import {
   drawRecordsTable,
   drawScoreBadge,
   drawScorePanel,
-  drawSoundButton,
+  drawSettingsPanel,
+  drawSettingsToggleRow,
   drawSubtitle,
   drawTitle,
   drawTitleWithLogo,
@@ -20,7 +21,6 @@ import {
   measureButton,
   measurePauseButton,
   measurePlayerNameButton,
-  measureSoundButton,
 } from './ui-text';
 
 function createMockContext(textWidth: number): CanvasRenderingContext2D {
@@ -38,6 +38,7 @@ function createMockContext(textWidth: number): CanvasRenderingContext2D {
     roundRect: vi.fn(),
     fill: vi.fn(),
     fillRect: vi.fn(),
+    globalAlpha: 1,
     stroke: vi.fn(),
     strokeText: vi.fn(),
     fillText: vi.fn(),
@@ -52,20 +53,14 @@ function createMockContext(textWidth: number): CanvasRenderingContext2D {
 }
 
 describe('ui-text helpers', () => {
-  describe('measureSoundButton', () => {
+  describe('measurePauseButton', () => {
     it('returns fixed square button size', () => {
-      expect(measureSoundButton()).toEqual({
+      expect(measurePauseButton()).toEqual({
         x: 0,
         y: 0,
         width: 40,
         height: 40,
       });
-    });
-  });
-
-  describe('measurePauseButton', () => {
-    it('matches sound button size', () => {
-      expect(measurePauseButton()).toEqual(measureSoundButton());
     });
   });
 
@@ -169,14 +164,18 @@ describe('ui-text helpers', () => {
       expect(ctx.fillText).toHaveBeenCalledWith('Серебро', 240, 235);
     });
 
-    it('draws sound button with mute state', () => {
+    it('draws settings panel and toggle rows', () => {
       const ctx = createMockContext(20);
+      const row = { x: 22, y: 120, width: 276, height: 44 };
 
-      drawSoundButton(ctx, { x: 10, y: 10, width: 40, height: 40 }, false);
-      drawSoundButton(ctx, { x: 10, y: 10, width: 40, height: 40 }, true);
+      drawSettingsPanel(ctx, 160, 120, 320, 2);
+      drawSettingsToggleRow(ctx, 'Звук', row, true);
+      drawSettingsToggleRow(ctx, 'Вибрация', row, false, true);
 
-      expect(ctx.fillText).toHaveBeenCalledWith('🔊', 30, 30);
-      expect(ctx.fillText).toHaveBeenCalledWith('🔇', 30, 30);
+      expect(ctx.roundRect).toHaveBeenCalled();
+      expect(ctx.fillText).toHaveBeenCalledWith('Звук', 22, 142);
+      expect(ctx.fillText).toHaveBeenCalledWith('Вибрация', 22, 142);
+      expect(ctx.arc).toHaveBeenCalled();
     });
 
     it('draws pause button and overlay', () => {
@@ -261,6 +260,31 @@ describe('ui-text helpers', () => {
         160,
         148,
       );
+    });
+
+    it('highlights current player row in records table', () => {
+      const ctx = createMockContext(80);
+
+      drawRecordsTable(
+        ctx,
+        [
+          { name: 'Петя', level: 'easy', score: 12 },
+          { name: 'Вася', level: 'easy', score: 8 },
+        ],
+        160,
+        100,
+        320,
+        false,
+        'Петя',
+      );
+
+      expect(ctx.roundRect).toHaveBeenCalled();
+      expect(ctx.fillText).toHaveBeenCalledWith(
+        '12',
+        expect.any(Number),
+        expect.any(Number),
+      );
+      expect(ctx.globalAlpha).toBe(1);
     });
 
     it('draws records rows and truncates long names', () => {

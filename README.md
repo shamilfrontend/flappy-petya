@@ -49,29 +49,33 @@ npm run cap:open:android
 
 `build:android` использует `base: './'` — это нужно для локальных ассетов внутри APK.
 
+После добавления `@capacitor/haptics` выполните `npm run cap:sync` для синхронизации нативного плагина.
+
 ## Игровые возможности
 
 - 3 уровня сложности (легкий / средний / сложный)
 - Локальные рекорды и опциональный Firebase-лидерборд (топ-10)
 - Countdown 3-2-1 перед стартом раунда
-- Звуковые эффекты с кнопкой mute на splash
-- Haptic feedback на мобильных (прыжок, очко, столкновение)
-- Пауза во время игры (кнопка II)
+- Звуковые эффекты и haptic feedback; настройки звука и вибрации в меню «Настройки» на главном экране
+- Пауза во время игры (кнопка II или P/Escape)
+- Клавиатура: Space/Enter — прыжок
+- PWA с offline-кэшем ассетов (service worker)
+- Подсветка своей строки в таблице рекордов
 - Медали на экране счёта: бронза (10+), серебро (25+), золото (50+)
 - Подсветка «Новый рекорд!» при побитии личного best
 
 ## Качество кода
 
 ```bash
-npm run check          # lint + test:run (как в pre-commit)
+npm run check          # lint + test:coverage (как в pre-commit и CI)
 npm run lint -w flappy-petya-web
 npm run test:run -w flappy-petya-web
-npm run test:coverage -w flappy-petya-web   # с порогами покрытия (CI)
+npm run test:coverage -w flappy-petya-web
 ```
 
 ### Pre-commit (Husky)
 
-После `npm install` при каждом `git commit` автоматически запускаются `lint` и `test:run`.
+После `npm install` при каждом `git commit` автоматически запускаются `lint` и `test:coverage` (с порогами покрытия).
 Обойти проверку в крайнем случае: `git commit --no-verify`.
 
 ## GitHub Actions

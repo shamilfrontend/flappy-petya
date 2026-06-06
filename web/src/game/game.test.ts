@@ -25,6 +25,9 @@ const soundMocks = vi.hoisted(() => ({
 const hapticMocks = vi.hoisted(() => ({
   pulse: vi.fn(),
   isSupported: vi.fn(() => true),
+  isEnabled: vi.fn(() => true),
+  setEnabled: vi.fn(),
+  toggleEnabled: vi.fn(() => false),
 }));
 
 vi.mock('../audio/sound', () => ({
@@ -66,33 +69,38 @@ vi.mock('../graphics/environment', () => ({
   drawGround: vi.fn(),
 }));
 
-vi.mock('../graphics/ui-text', () => ({
-  measureButton: vi.fn(() => ({ x: 0, y: 0, width: 100, height: 40 })),
-  measurePlayerNameButton: vi.fn(() => ({ x: 0, y: 0, width: 120, height: 40 })),
-  measureSoundButton: vi.fn(() => ({ x: 0, y: 0, width: 40, height: 40 })),
-  layoutRecordsTabs: vi.fn((_centerX: number, y: number, _width: number, count: number) =>
-    Array.from({ length: count }, (_, index) => ({
-      x: index * 106,
-      y,
-      width: 100,
-      height: 36,
-    })),
-  ),
-  drawButton: vi.fn(),
-  drawTitle: vi.fn(),
-  drawSubtitle: vi.fn(),
-  drawTitleWithLogo: vi.fn(),
-  drawRecordsTab: vi.fn(),
-  drawRecordsTable: vi.fn(),
-  drawPlayerNameButton: vi.fn(),
-  drawScoreBadge: vi.fn(),
-  drawScorePanel: vi.fn(),
-  drawGameOverImage: vi.fn(),
-  drawSoundButton: vi.fn(),
-  drawCountdown: vi.fn(),
-  drawPauseButton: vi.fn(),
-  drawPauseOverlay: vi.fn(),
-}));
+vi.mock('../graphics/ui-text', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../graphics/ui-text')>();
+
+  return {
+    ...actual,
+    measureButton: vi.fn(() => ({ x: 0, y: 0, width: 100, height: 40 })),
+    measurePlayerNameButton: vi.fn(() => ({ x: 0, y: 0, width: 120, height: 40 })),
+    layoutRecordsTabs: vi.fn((_centerX: number, y: number, _width: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        x: index * 106,
+        y,
+        width: 100,
+        height: 36,
+      })),
+    ),
+    drawButton: vi.fn(),
+    drawTitle: vi.fn(),
+    drawSubtitle: vi.fn(),
+    drawTitleWithLogo: vi.fn(),
+    drawRecordsTab: vi.fn(),
+    drawRecordsTable: vi.fn(),
+    drawPlayerNameButton: vi.fn(),
+    drawScoreBadge: vi.fn(),
+    drawScorePanel: vi.fn(),
+    drawGameOverImage: vi.fn(),
+    drawSettingsPanel: vi.fn(),
+    drawSettingsToggleRow: vi.fn(),
+    drawCountdown: vi.fn(),
+    drawPauseButton: vi.fn(),
+    drawPauseOverlay: vi.fn(),
+  };
+});
 
 vi.mock('../graphics/sprites', () => ({
   initSprites: vi.fn(() => ({
@@ -143,13 +151,28 @@ interface GamePrivate {
   render: () => void;
   resize: () => void;
   canvas: HTMLCanvasElement;
-  soundBtn: { x: number; y: number; width: number; height: number };
+  recordsBtn: { x: number; y: number; width: number; height: number };
+  playerNameBtn: { x: number; y: number; width: number; height: number };
+  backBtn: { x: number; y: number; width: number; height: number };
+  settingsBtn: { x: number; y: number; width: number; height: number };
+  soundToggleBtn: { x: number; y: number; width: number; height: number };
+  hapticToggleBtn: { x: number; y: number; width: number; height: number };
   pauseBtn: { x: number; y: number; width: number; height: number };
   fgpos: number;
 }
 
 function accessGame(game: Game): GamePrivate {
   return game as unknown as GamePrivate;
+}
+
+function centerOf(rect: { x: number; y: number; width: number; height: number }): {
+  x: number;
+  y: number;
+} {
+  return {
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2,
+  };
 }
 
 function createMockImage(this: {
@@ -353,7 +376,7 @@ describe('Game', () => {
 
   it('opens records screen and refreshes leaderboard', async () => {
     const game = await startGame();
-    getCanvasPointMock.mockReturnValue({ x: 160, y: 337 });
+    getCanvasPointMock.mockReturnValue(centerOf(accessGame(game).recordsBtn));
 
     press(game);
 
@@ -363,9 +386,10 @@ describe('Game', () => {
 
   it('returns to splash from records on back button', async () => {
     const game = await startGame();
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 337 });
+    const internals = accessGame(game);
+    getCanvasPointMock.mockReturnValueOnce(centerOf(internals.recordsBtn));
     press(game);
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 442 });
+    getCanvasPointMock.mockReturnValueOnce(centerOf(internals.backBtn));
 
     press(game);
 
@@ -453,7 +477,7 @@ describe('Game', () => {
   it('edits player name from splash screen', async () => {
     const game = await startGame('Петя');
     nameInputPrompt.mockResolvedValueOnce({ name: 'Вася', confirmed: true });
-    getCanvasPointMock.mockReturnValue({ x: 160, y: 389 });
+    getCanvasPointMock.mockReturnValue(centerOf(accessGame(game).playerNameBtn));
 
     press(game);
 
@@ -468,7 +492,7 @@ describe('Game', () => {
   it('keeps player name when edit prompt is cancelled', async () => {
     const game = await startGame('Петя');
     nameInputPrompt.mockResolvedValueOnce({ name: 'Вася', confirmed: false });
-    getCanvasPointMock.mockReturnValue({ x: 160, y: 389 });
+    getCanvasPointMock.mockReturnValue(centerOf(accessGame(game).playerNameBtn));
 
     press(game);
 
@@ -482,7 +506,7 @@ describe('Game', () => {
 
   it('switches records tab and refreshes leaderboard', async () => {
     const game = await startGame();
-    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 337 });
+    getCanvasPointMock.mockReturnValueOnce(centerOf(accessGame(game).recordsBtn));
     press(game);
     vi.mocked(refreshLeaderboard).mockClear();
     getCanvasPointMock.mockReturnValueOnce({ x: 53, y: 85 });
@@ -655,20 +679,50 @@ describe('Game', () => {
       expect.any(Number),
       expect.any(Number),
       true,
+      '',
     );
   });
 
-  it('toggles sound mute from splash screen', async () => {
+  it('opens settings from splash and toggles sound', async () => {
     const game = await startGame();
-    const { soundBtn } = accessGame(game);
+    const internals = accessGame(game);
     getCanvasPointMock.mockReturnValue({
-      x: soundBtn.x + soundBtn.width / 2,
-      y: soundBtn.y + soundBtn.height / 2,
+      x: internals.settingsBtn.x + internals.settingsBtn.width / 2,
+      y: internals.settingsBtn.y + internals.settingsBtn.height / 2,
     });
 
     press(game);
+    expect(internals.currentState).toBe(GAME_STATES.Settings);
+
+    getCanvasPointMock.mockReturnValue({
+      x: internals.soundToggleBtn.x + internals.soundToggleBtn.width / 2,
+      y: internals.soundToggleBtn.y + internals.soundToggleBtn.height / 2,
+    });
+    press(game);
 
     expect(soundMocks.toggleMuted).toHaveBeenCalledOnce();
+  });
+
+  it('toggles haptic from settings and returns to splash', async () => {
+    const game = await startGame();
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Settings;
+
+    getCanvasPointMock.mockReturnValue({
+      x: internals.hapticToggleBtn.x + internals.hapticToggleBtn.width / 2,
+      y: internals.hapticToggleBtn.y + internals.hapticToggleBtn.height / 2,
+    });
+    press(game);
+    expect(hapticMocks.toggleEnabled).toHaveBeenCalledOnce();
+
+    getCanvasPointMock.mockReturnValue({ x: 160, y: 420 });
+    internals.backBtn = { x: 110, y: 400, width: 100, height: 40 };
+    getCanvasPointMock.mockReturnValue({
+      x: internals.backBtn.x + internals.backBtn.width / 2,
+      y: internals.backBtn.y + internals.backBtn.height / 2,
+    });
+    press(game);
+    expect(internals.currentState).toBe(GAME_STATES.Splash);
   });
 
   it('enters countdown and ignores jump input until game starts', async () => {
@@ -754,5 +808,37 @@ describe('Game', () => {
     }
 
     expect(soundMocks.play).toHaveBeenCalledWith('tick');
+  });
+
+  it('sets accessibility attributes on canvas', async () => {
+    await startGame();
+
+    const canvas = document.querySelector('canvas');
+
+    expect(canvas?.getAttribute('role')).toBe('application');
+    expect(canvas?.getAttribute('aria-label')).toContain('Flappy Petya');
+    expect(canvas?.tabIndex).toBe(0);
+  });
+
+  it('jumps on Space key during active game', async () => {
+    const game = await startActiveGame();
+    const internals = accessGame(game);
+    const velocityBefore = internals.goose.velocity;
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+
+    expect(internals.goose.velocity).toBe(-GOOSE_JUMP);
+    expect(internals.goose.velocity).not.toBe(velocityBefore);
+    expect(soundMocks.play).toHaveBeenCalledWith('jump');
+  });
+
+  it('toggles pause on P key', async () => {
+    const game = await startActiveGame();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p' }));
+    expect(accessGame(game).currentState).toBe(GAME_STATES.Paused);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p' }));
+    expect(accessGame(game).currentState).toBe(GAME_STATES.Game);
   });
 });

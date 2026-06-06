@@ -4,8 +4,13 @@ import {
   getRecordsLayout,
   getScoreBadgeY,
   getScoreLayout,
+  getSettingsLayout,
+  getSettingsPanelHeight,
   getSplashLayout,
+  layoutSettingsToggles,
+  layoutSplashFooterButtons,
 } from './ui-layout';
+import { getRecordsPanelWidth } from './ui-text';
 
 describe('ui layout', () => {
   const height = 480;
@@ -18,7 +23,53 @@ describe('ui layout', () => {
     expect(layout.difficultyTabsY).toBeCloseTo(149.76);
     expect(layout.playButtonY).toBeCloseTo(201.76);
     expect(layout.footerStartY).toBeCloseTo(316.8);
-    expect(layout.soundButtonY).toBeCloseTo(278.4);
+  });
+
+  it('lays out splash footer buttons in a row', () => {
+    const centerX = 160;
+    const viewportWidth = 320;
+    const panelWidth = getRecordsPanelWidth(viewportWidth);
+    const panelX = centerX - panelWidth / 2;
+    const tabWidth = (panelWidth - 6) / 2;
+    const buttons = layoutSplashFooterButtons(centerX, 300, viewportWidth);
+
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toEqual({
+      x: panelX,
+      y: 300,
+      width: tabWidth,
+      height: 36,
+    });
+    expect(buttons[1].x).toBeCloseTo(panelX + tabWidth + 6);
+  });
+
+  it('computes settings layout from viewport height', () => {
+    const layout = getSettingsLayout(height);
+
+    expect(layout.titleY).toBeCloseTo(38.4);
+    expect(layout.panelStartY).toBeCloseTo(105.6);
+    expect(layout.backButtonY).toBeCloseTo(422.4);
+  });
+
+  it('lays out settings toggle rows inside panel', () => {
+    const centerX = 160;
+    const viewportWidth = 320;
+    const panelWidth = getRecordsPanelWidth(viewportWidth);
+    const panelX = centerX - panelWidth / 2;
+    const toggles = layoutSettingsToggles(centerX, 120, viewportWidth);
+
+    expect(toggles).toHaveLength(2);
+    expect(toggles[0]).toEqual({
+      x: panelX + 12,
+      y: 120,
+      width: panelWidth - 24,
+      height: 44,
+    });
+    expect(toggles[1].y).toBe(164);
+  });
+
+  it('computes settings panel height from row count', () => {
+    expect(getSettingsPanelHeight(2)).toBe(88);
   });
 
   it('computes countdown y from viewport height', () => {

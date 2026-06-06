@@ -10,7 +10,10 @@ import {
   getScoreBadgeY,
   getRecordsLayout,
   getScoreLayout,
+  getSettingsLayout,
   getSplashLayout,
+  layoutSettingsToggles,
+  layoutSplashFooterButtons,
 } from '../graphics/ui-layout';
 import { initSprites, type Sprites } from '../graphics/sprites';
 import {
@@ -23,7 +26,8 @@ import {
   drawRecordsTable,
   drawScoreBadge,
   drawScorePanel,
-  drawSoundButton,
+  drawSettingsPanel,
+  drawSettingsToggleRow,
   drawSubtitle,
   drawTitle,
   drawTitleWithLogo,
@@ -31,10 +35,10 @@ import {
   drawPlayerNameButton,
   measureButton,
   measurePlayerNameButton,
-  measureSoundButton,
   type ButtonRect,
 } from '../graphics/ui-text';
 import { loadImage } from '../lib/load-image';
+import { bindGameKeyboard } from '../input/keyboard';
 import { getCanvasPoint, isPointInRect, type PressEvent } from '../input/pointer';
 import {
   getPersonalBest,
@@ -81,6 +85,7 @@ const LOGO_URL = `${import.meta.env.BASE_URL}static/logo.png`;
 const RETRY_BUTTON_LABEL = 'Ещё раз';
 const PLAY_BUTTON_LABEL = 'Играть';
 const RECORDS_BUTTON_LABEL = 'Рекорды';
+const SETTINGS_BUTTON_LABEL = 'Настройки';
 const BACK_BUTTON_LABEL = 'Назад';
 
 export class Game {
@@ -114,7 +119,9 @@ export class Game {
   private recordsLevelTab: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
   private difficultyTabBtns: ButtonRect[] = [];
   private playBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
-  private soundBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private settingsBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private soundToggleBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private hapticToggleBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   private pauseBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   private selectedDifficulty: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
   private countdownStep = -1;
@@ -123,9 +130,14 @@ export class Game {
   private fgScrollSpeed = getDifficultyById(DIFFICULTY_LEVELS.Medium).fgScrollSpeed;
   private hasSavedCurrentScore = false;
   private lastFrameTime = 0;
-
   start(): void {
     this.canvas = document.createElement('canvas');
+    this.canvas.setAttribute('role', 'application');
+    this.canvas.setAttribute(
+      'aria-label',
+      'Flappy Petya — нажмите Space для прыжка',
+    );
+    this.canvas.tabIndex = 0;
     this.viewport = getViewportState();
 
     const ctx = this.canvas.getContext('2d');
@@ -177,13 +189,13 @@ export class Game {
       height: retryBtnSize.height,
     };
 
-    const recordsBtnSize = measureButton(this.ctx, RECORDS_BUTTON_LABEL);
-    this.recordsBtn = {
-      x: (logicalWidth - recordsBtnSize.width) / 2,
-      y: splashLayout.footerStartY,
-      width: recordsBtnSize.width,
-      height: recordsBtnSize.height,
-    };
+    const [recordsBtn, settingsBtn] = layoutSplashFooterButtons(
+      logicalWidth / 2,
+      splashLayout.footerStartY,
+      logicalWidth,
+    );
+    this.recordsBtn = recordsBtn;
+    this.settingsBtn = settingsBtn;
 
     if (this.playerName) {
       const playerNameBtnSize = measurePlayerNameButton(this.ctx, this.playerName);
@@ -195,6 +207,7 @@ export class Game {
       };
     }
 
+    const settingsLayout = getSettingsLayout(logicalHeight);
     const backBtnSize = measureButton(this.ctx, BACK_BUTTON_LABEL);
     this.backBtn = {
       x: (logicalWidth - backBtnSize.width) / 2,
@@ -202,6 +215,14 @@ export class Game {
       width: backBtnSize.width,
       height: backBtnSize.height,
     };
+
+    const [soundToggleBtn, hapticToggleBtn] = layoutSettingsToggles(
+      logicalWidth / 2,
+      settingsLayout.panelStartY,
+      logicalWidth,
+    );
+    this.soundToggleBtn = soundToggleBtn;
+    this.hapticToggleBtn = hapticToggleBtn;
 
     this.recordsTabBtns = layoutRecordsTabs(
       logicalWidth / 2,
@@ -225,14 +246,6 @@ export class Game {
       height: playBtnSize.height,
     };
 
-    const soundBtnSize = measureSoundButton();
-    this.soundBtn = {
-      x: logicalWidth - soundBtnSize.width - 16,
-      y: splashLayout.soundButtonY,
-      width: soundBtnSize.width,
-      height: soundBtnSize.height,
-    };
-
     this.pauseBtn = getPauseButtonRect(
       logicalWidth,
       getScoreBadgeY(logicalHeight),
@@ -244,11 +257,37 @@ export class Game {
 
     if (window.PointerEvent) {
       this.canvas.addEventListener('pointerdown', this.onPress, opts);
+    } else {
+      this.canvas.addEventListener('mousedown', this.onPress);
+      this.canvas.addEventListener('touchstart', this.onPress, opts);
+    }
+
+    bindGameKeyboard({
+      jump: () => this.performJump(),
+      pause: () => this.togglePause(),
+      canJump: () => this.currentState === GAME_STATES.Game && !this.isAwaitingName,
+      canPause: () =>
+        !this.isAwaitingName
+        && (this.currentState === GAME_STATES.Game
+          || this.currentState === GAME_STATES.Paused),
+    });
+  }
+
+  private performJump(): void {
+    this.goose.jump();
+    this.sound.play(SOUND_EVENTS.Jump);
+    this.haptic.pulse(HAPTIC_EVENTS.Jump);
+  }
+
+  private togglePause(): void {
+    if (this.currentState === GAME_STATES.Game) {
+      this.currentState = GAME_STATES.Paused;
       return;
     }
 
-    this.canvas.addEventListener('mousedown', this.onPress);
-    this.canvas.addEventListener('touchstart', this.onPress, opts);
+    if (this.currentState === GAME_STATES.Paused) {
+      this.currentState = GAME_STATES.Game;
+    }
   }
 
   private bindResizeTracking(): void {
@@ -341,8 +380,8 @@ export class Game {
           break;
         }
 
-        if (isPointInRect(point, this.soundBtn)) {
-          this.sound.toggleMuted();
+        if (isPointInRect(point, this.settingsBtn)) {
+          this.currentState = GAME_STATES.Settings;
           break;
         }
 
@@ -357,6 +396,31 @@ export class Game {
 
         if (selectedIndex >= 0) {
           this.applyDifficulty(DIFFICULTIES[selectedIndex].id);
+        }
+        break;
+      }
+
+      case GAME_STATES.Settings: {
+        const point = getCanvasPoint(this.canvas, evt, this.viewport);
+        if (!point) {
+          break;
+        }
+
+        if (isPointInRect(point, this.backBtn)) {
+          this.currentState = GAME_STATES.Splash;
+          break;
+        }
+
+        if (isPointInRect(point, this.soundToggleBtn)) {
+          this.sound.toggleMuted();
+          break;
+        }
+
+        if (
+          this.haptic.isSupported()
+          && isPointInRect(point, this.hapticToggleBtn)
+        ) {
+          this.haptic.toggleEnabled();
         }
         break;
       }
@@ -390,18 +454,16 @@ export class Game {
         const point = getCanvasPoint(this.canvas, evt, this.viewport);
 
         if (point && isPointInRect(point, this.pauseBtn)) {
-          this.currentState = GAME_STATES.Paused;
+          this.togglePause();
           break;
         }
 
-        this.goose.jump();
-        this.sound.play(SOUND_EVENTS.Jump);
-        this.haptic.pulse(HAPTIC_EVENTS.Jump);
+        this.performJump();
         break;
       }
 
       case GAME_STATES.Paused:
-        this.currentState = GAME_STATES.Game;
+        this.togglePause();
         break;
 
       case GAME_STATES.Score: {
@@ -578,6 +640,7 @@ export class Game {
     const splashLayout = getSplashLayout(logicalHeight);
     const scoreLayout = getScoreLayout(logicalHeight);
     const recordsLayout = getRecordsLayout(logicalHeight);
+    const settingsLayout = getSettingsLayout(logicalHeight);
 
     drawSky(ctx, logicalWidth, logicalHeight);
     this.pipes.draw(ctx);
@@ -585,6 +648,7 @@ export class Game {
     if (
       this.currentState !== GAME_STATES.Splash
       && this.currentState !== GAME_STATES.Records
+      && this.currentState !== GAME_STATES.Settings
     ) {
       this.goose.draw(ctx, sprites);
     }
@@ -612,8 +676,8 @@ export class Game {
       });
 
       drawButton(ctx, PLAY_BUTTON_LABEL, this.playBtn, true);
-      drawButton(ctx, RECORDS_BUTTON_LABEL, this.recordsBtn);
-      drawSoundButton(ctx, this.soundBtn, this.sound.isMuted());
+      drawRecordsTab(ctx, RECORDS_BUTTON_LABEL, this.recordsBtn, false);
+      drawRecordsTab(ctx, SETTINGS_BUTTON_LABEL, this.settingsBtn, false);
 
       if (this.playerName) {
         drawPlayerNameButton(ctx, this.playerName, this.playerNameBtn);
@@ -627,6 +691,31 @@ export class Game {
         getCountdownY(logicalHeight),
         this.countdownStep,
       );
+    }
+
+    if (this.currentState === GAME_STATES.Settings) {
+      drawTitle(ctx, 'Настройки', centerX, settingsLayout.titleY);
+      drawSettingsPanel(
+        ctx,
+        centerX,
+        settingsLayout.panelStartY,
+        logicalWidth,
+        2,
+      );
+      drawSettingsToggleRow(
+        ctx,
+        'Звук',
+        this.soundToggleBtn,
+        !this.sound.isMuted(),
+      );
+      drawSettingsToggleRow(
+        ctx,
+        'Вибрация',
+        this.hapticToggleBtn,
+        this.haptic.isEnabled(),
+        !this.haptic.isSupported(),
+      );
+      drawButton(ctx, BACK_BUTTON_LABEL, this.backBtn);
     }
 
     if (this.currentState === GAME_STATES.Records) {
@@ -649,6 +738,7 @@ export class Game {
         logicalWidth,
         isLeaderboardLoading()
           && getTopRecordsByLevel(this.recordsLevelTab).length === 0,
+        this.playerName,
       );
       drawButton(ctx, BACK_BUTTON_LABEL, this.backBtn);
     }
