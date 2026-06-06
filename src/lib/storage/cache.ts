@@ -1,0 +1,65 @@
+import type { DifficultyLevel } from '../../game/difficulty';
+import {
+  createDefaultProfile,
+  type GameRecord,
+  type PlayerProfile,
+} from './types';
+
+interface StorageCache {
+  profile: PlayerProfile;
+  localRecords: GameRecord[];
+  leaderboards: Partial<Record<DifficultyLevel, GameRecord[]>>;
+  isReady: boolean;
+  isLeaderboardLoading: boolean;
+}
+
+const cache: StorageCache = {
+  profile: createDefaultProfile(),
+  localRecords: [],
+  leaderboards: {},
+  isReady: false,
+  isLeaderboardLoading: false,
+};
+
+export function getCacheProfile(): PlayerProfile {
+  return cache.profile;
+}
+
+export function setCacheProfile(profile: PlayerProfile): void {
+  cache.profile = profile;
+}
+
+export function getCacheLocalRecords(): GameRecord[] {
+  return cache.localRecords;
+}
+
+export function setCacheLocalRecords(records: GameRecord[]): void {
+  cache.localRecords = records;
+}
+
+export function getCacheLeaderboard(level: DifficultyLevel): GameRecord[] | undefined {
+  return cache.leaderboards[level];
+}
+
+export function setCacheLeaderboard(
+  level: DifficultyLevel,
+  records: GameRecord[],
+): void {
+  cache.leaderboards[level] = records;
+}
+
+export function isStorageCacheReady(): boolean {
+  return cache.isReady;
+}
+
+export function setStorageCacheReady(value: boolean): void {
+  cache.isReady = value;
+}
+
+export function isLeaderboardCacheLoading(): boolean {
+  return cache.isLeaderboardLoading;
+}
+
+export function setLeaderboardCacheLoading(value: boolean): void {
+  cache.isLeaderboardLoading = value;
+}

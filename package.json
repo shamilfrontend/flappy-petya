@@ -1,5 +1,5 @@
 {
-  "name": "flappy-petr",
+  "name": "flappy-petya",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -11,5 +11,8 @@
   "devDependencies": {
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
+  },
+  "dependencies": {
+    "firebase": "^12.14.0"
   }
 }

@@ -2,7 +2,7 @@ import { Sprite } from './sprite';
 
 export interface Sprites {
   goose: Sprite[];
-  petrSplash: Sprite;
+  petyaSplash: Sprite;
 }
 
 export function initSprites(
@@ -15,6 +15,6 @@ export function initSprites(
       new Sprite(gooseImg, 32, 0, 32, 24),
       new Sprite(gooseImg, 64, 0, 32, 24),
     ],
-    petrSplash: new Sprite(splashImg, 0, 0, 55, 100),
+    petyaSplash: new Sprite(splashImg, 0, 0, 55, 100),
   };
 }

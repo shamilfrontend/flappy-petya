@@ -18,6 +18,7 @@ import {
   drawScorePanel,
   drawSubtitle,
   drawTitle,
+  drawTitleWithLogo,
   layoutRecordsTabs,
   drawPlayerNameButton,
   measureButton,
@@ -25,8 +26,19 @@ import {
   type ButtonRect,
 } from '../graphics/ui-text';
 import { getCanvasPoint, isPointInRect, type PressEvent } from '../input/pointer';
-import { getPersonalBest, getTopRecordsByLevel, saveRecord } from '../lib/records';
-import { getSavedPlayerName, savePlayerName } from '../lib/player-name';
+import {
+  getPersonalBest,
+  getSavedPlayerName,
+  getSelectedDifficulty,
+  getTopRecordsByLevel,
+  initStorage,
+  isLeaderboardLoading,
+  refreshLeaderboard,
+  savePlayerName,
+  saveRecord,
+  saveSelectedDifficulty,
+} from '../lib/storage';
+import { hideAppLoader } from '../ui/app-loader';
 import { NameInputOverlay } from '../ui/name-input';
 import {
   applyCanvasSize,
@@ -48,8 +60,9 @@ import {
 import { GAME_STATES, type GameState } from './states';
 
 const GOOSE_URL = `${import.meta.env.BASE_URL}static/goose.png`;
-const SPLASH_URL = `${import.meta.env.BASE_URL}static/petr-splash.png`;
+const SPLASH_URL = `${import.meta.env.BASE_URL}static/petya-splash.png`;
 const GAME_OVER_URL = `${import.meta.env.BASE_URL}static/game-over-goose.png`;
+const LOGO_URL = `${import.meta.env.BASE_URL}static/logo.png`;
 const RETRY_BUTTON_LABEL = 'Ещё раз';
 const PLAY_BUTTON_LABEL = 'Играть';
 const RECORDS_BUTTON_LABEL = 'Рекорды';
@@ -71,6 +84,7 @@ export class Game {
   private viewport!: ViewportState;
   private sprites!: Sprites;
   private gameOverImg!: HTMLImageElement;
+  private logoImg!: HTMLImageElement;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private resizeObserver: ResizeObserver | null = null;
 
@@ -118,16 +132,21 @@ export class Game {
       loadImage(GOOSE_URL),
       loadImage(SPLASH_URL),
       loadImage(GAME_OVER_URL),
+      loadImage(LOGO_URL),
+      initStorage(),
     ])
-      .then(([gooseImg, splashImg, gameOverImg]) => {
+      .then(([gooseImg, splashImg, gameOverImg, logoImg]) => {
         this.sprites = initSprites(gooseImg, splashImg);
         this.gameOverImg = gameOverImg;
+        this.logoImg = logoImg;
+        this.syncStateFromStorage();
         this.layoutUi();
-        this.applyDifficulty(this.selectedDifficulty);
+        hideAppLoader();
         this.run();
       })
       .catch((err) => {
         console.error(err);
+        hideAppLoader();
         alert('Не удалось загрузить игровые ресурсы');
       });
   }
@@ -240,11 +259,33 @@ export class Game {
     this.layoutUi();
   }
 
-  private applyDifficulty(level: DifficultyLevel): void {
+  private syncStateFromStorage(): void {
+    this.playerName = getSavedPlayerName();
+
+    const savedDifficulty = getSelectedDifficulty();
+    if (savedDifficulty) {
+      this.applyDifficulty(savedDifficulty, false);
+    } else {
+      this.applyDifficulty(this.selectedDifficulty, false);
+    }
+
+    if (this.playerName) {
+      this.personalBest = getPersonalBest(
+        this.playerName,
+        this.selectedDifficulty,
+      );
+    }
+  }
+
+  private applyDifficulty(level: DifficultyLevel, persist = true): void {
     const settings = getDifficultyById(level);
     this.selectedDifficulty = level;
     this.fgScrollSpeed = settings.fgScrollSpeed;
     this.pipes.setDifficulty(settings);
+
+    if (persist) {
+      saveSelectedDifficulty(level);
+    }
   }
 
   private readonly onPress = (evt: PressEvent): void => {
@@ -266,6 +307,7 @@ export class Game {
         if (isPointInRect(point, this.recordsBtn)) {
           this.recordsLevelTab = this.selectedDifficulty;
           this.currentState = GAME_STATES.Records;
+          void refreshLeaderboard(this.recordsLevelTab);
           break;
         }
 
@@ -306,6 +348,7 @@ export class Game {
 
         if (tabIndex >= 0) {
           this.recordsLevelTab = DIFFICULTIES[tabIndex].id;
+          void refreshLeaderboard(this.recordsLevelTab);
         }
         break;
       }
@@ -380,6 +423,7 @@ export class Game {
     this.layoutUi();
     this.currentState = GAME_STATES.Game;
     this.pipes.reset();
+    this.pipes.seedInitial(this.viewport.logicalWidth, this.viewport.logicalHeight);
     this.goose.jump();
   }
 
@@ -453,21 +497,24 @@ export class Game {
     drawSky(ctx, logicalWidth, logicalHeight);
     this.pipes.draw(ctx);
 
-    if (this.currentState === GAME_STATES.Splash) {
-      const splash = sprites.petrSplash;
-      sprites.petrSplash.draw(
-        ctx,
-        centerX - splash.width / 2,
-        this.goose.y - splash.height / 2,
-      );
-    } else if (this.currentState !== GAME_STATES.Records) {
+    if (
+      this.currentState !== GAME_STATES.Splash
+      && this.currentState !== GAME_STATES.Records
+    ) {
       this.goose.draw(ctx, sprites);
     }
 
     drawGround(ctx, logicalWidth, logicalHeight, this.fgpos);
 
     if (this.currentState === GAME_STATES.Splash) {
-      drawTitle(ctx, 'Flappy Petr', centerX, splashLayout.titleY);
+      drawTitleWithLogo(
+        ctx,
+        'Flappy Petya',
+        this.logoImg,
+        centerX,
+        splashLayout.titleY,
+        logicalWidth,
+      );
       drawSubtitle(ctx, 'Выбери уровень', centerX, splashLayout.subtitleY);
 
       DIFFICULTIES.forEach((difficulty, index) => {
@@ -505,6 +552,8 @@ export class Game {
         centerX,
         recordsLayout.tableStartY,
         logicalWidth,
+        isLeaderboardLoading()
+          && getTopRecordsByLevel(this.recordsLevelTab).length === 0,
       );
       drawButton(ctx, BACK_BUTTON_LABEL, this.backBtn);
     }

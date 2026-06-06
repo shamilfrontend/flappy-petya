@@ -41,6 +41,15 @@ function drawOutlinedText(
   ctx.restore();
 }
 
+const TITLE_FONT = 'bold 28px "Arial Rounded MT Bold", system-ui, sans-serif';
+const TITLE_TEXT_HEIGHT = 28;
+const TITLE_LOGO_GAP = 6;
+const TITLE_LOGO_MAX_HEIGHT = 24;
+const TITLE_SIDE_PADDING = 16;
+const LOGO_BRAND_TEXT = 'ППР';
+const LOGO_ICON_SOURCE_WIDTH = 20;
+const LOGO_TEXT_GAP = 4;
+
 export function drawTitle(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -48,7 +57,100 @@ export function drawTitle(
   y: number,
 ): void {
   drawOutlinedText(ctx, text, centerX, y, {
-    font: 'bold 28px "Arial Rounded MT Bold", system-ui, sans-serif',
+    font: TITLE_FONT,
+    fill: THEME.accent,
+    strokeWidth: 5,
+  });
+}
+
+function getLogoBrandFont(logoHeight: number): string {
+  const fontSize = Math.max(10, Math.round(logoHeight * 0.75));
+  return `bold ${fontSize}px "Arial Rounded MT Bold", system-ui, sans-serif`;
+}
+
+function measureLogoBrand(
+  ctx: CanvasRenderingContext2D,
+  logo: HTMLImageElement,
+  logoHeight: number,
+): { width: number; iconWidth: number; textWidth: number } {
+  const iconWidth = logoHeight * (LOGO_ICON_SOURCE_WIDTH / logo.naturalHeight);
+  const logoFont = getLogoBrandFont(logoHeight);
+
+  ctx.save();
+  ctx.font = logoFont;
+  const textWidth = ctx.measureText(LOGO_BRAND_TEXT).width;
+  ctx.restore();
+
+  return {
+    width: iconWidth + LOGO_TEXT_GAP + textWidth,
+    iconWidth,
+    textWidth,
+  };
+}
+
+function drawLogoBrand(
+  ctx: CanvasRenderingContext2D,
+  logo: HTMLImageElement,
+  centerX: number,
+  centerY: number,
+  logoHeight: number,
+): void {
+  const { width, iconWidth, textWidth } = measureLogoBrand(ctx, logo, logoHeight);
+  const groupLeft = centerX - width / 2;
+  const logoY = centerY - logoHeight / 2;
+  const logoFont = getLogoBrandFont(logoHeight);
+
+  ctx.drawImage(
+    logo,
+    0,
+    0,
+    LOGO_ICON_SOURCE_WIDTH,
+    logo.naturalHeight,
+    groupLeft,
+    logoY,
+    iconWidth,
+    logoHeight,
+  );
+
+  drawOutlinedText(
+    ctx,
+    LOGO_BRAND_TEXT,
+    groupLeft + iconWidth + LOGO_TEXT_GAP + textWidth / 2,
+    centerY,
+    {
+      font: logoFont,
+      fill: THEME.text,
+      strokeWidth: 4,
+    },
+  );
+}
+
+export function drawTitleWithLogo(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  logo: HTMLImageElement,
+  centerX: number,
+  y: number,
+  maxWidth: number,
+): void {
+  const maxLogoWidth = maxWidth - TITLE_SIDE_PADDING * 2;
+  let logoHeight = TITLE_LOGO_MAX_HEIGHT;
+  let brandWidth = measureLogoBrand(ctx, logo, logoHeight).width;
+
+  if (brandWidth > maxLogoWidth) {
+    logoHeight = Math.max(
+      12,
+      Math.round(logoHeight * (maxLogoWidth / brandWidth)),
+    );
+  }
+
+  const logoCenterY =
+    y - TITLE_TEXT_HEIGHT / 2 - TITLE_LOGO_GAP - logoHeight / 2;
+
+  drawLogoBrand(ctx, logo, centerX, logoCenterY, logoHeight);
+
+  drawOutlinedText(ctx, text, centerX, y, {
+    font: TITLE_FONT,
     fill: THEME.accent,
     strokeWidth: 5,
   });
@@ -368,6 +470,7 @@ export function drawRecordsTable(
   centerX: number,
   startY: number,
   viewportWidth: number,
+  isLoading = false,
 ): void {
   const panelW = getRecordsPanelWidth(viewportWidth);
   const panelX = centerX - panelW / 2;
@@ -413,7 +516,11 @@ export function drawRecordsTable(
 
   if (visibleRecords.length === 0) {
     ctx.textAlign = 'center';
-    ctx.fillText('Пока нет рекордов', centerX, startY + headerHeight + RECORDS_ROW_HEIGHT / 2);
+    ctx.fillText(
+      isLoading ? 'Загрузка...' : 'Пока нет рекордов',
+      centerX,
+      startY + headerHeight + RECORDS_ROW_HEIGHT / 2,
+    );
     ctx.restore();
     return;
   }

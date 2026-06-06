@@ -8,10 +8,23 @@
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <title>Flappy Petr</title>
+    <title>Flappy Petya</title>
     <link rel="stylesheet" href="/src/styles/main.css" />
   </head>
   <body>
+    <div
+      id="app-loader"
+      class="app-loader"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      aria-label="Загрузка игры"
+    >
+      <div class="app-loader__content">
+        <div class="app-loader__spinner" aria-hidden="true"></div>
+        <p class="app-loader__text">Загрузка...</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

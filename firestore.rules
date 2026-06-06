@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidPlayerName(name) {
+      return name is string && name.size() > 0 && name.size() <= 24;
+    }
+
+    function isValidScore(score) {
+      return score is number && score >= 1 && score <= 9999;
+    }
+
+    match /players/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId)
+        && isValidPlayerName(request.resource.data.name)
+        && request.resource.data.bests.easy is number
+        && request.resource.data.bests.medium is number
+        && request.resource.data.bests.hard is number
+        && request.resource.data.bests.easy >= 0
+        && request.resource.data.bests.medium >= 0
+        && request.resource.data.bests.hard >= 0;
+    }
+
+    match /leaderboard/{level}/scores/{userId} {
+      allow read: if true;
+      allow create: if isOwner(userId)
+        && isValidPlayerName(request.resource.data.name)
+        && isValidScore(request.resource.data.score);
+      allow update: if isOwner(userId)
+        && isValidPlayerName(request.resource.data.name)
+        && isValidScore(request.resource.data.score)
+        && (
+          !resource.exists()
+          || request.resource.data.score >= resource.data.score
+        );
+    }
+  }
+}

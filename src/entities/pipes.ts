@@ -1,4 +1,5 @@
 import {
+  BASE_WIDTH,
   GOOSE_X,
   GROUND_HEIGHT,
   OBSTACLE_BODY_HEIGHT,
@@ -23,6 +24,9 @@ export interface Pipe {
   passed: boolean;
 }
 
+/** Доля компенсации широкого экрана: 0 — как раньше, 1 — как на базовой ширине. */
+const WIDE_SCREEN_SEED_BLEND = 0.4;
+
 export class Pipes {
   private pipes: Pipe[] = [];
   private pipeGap = PIPE_GAP;
@@ -37,6 +41,23 @@ export class Pipes {
   reset(): void {
     this.pipes = [];
     this.spawnFrames = 0;
+  }
+
+  /** Смещает первый столбец ближе на широких экранах, не ломая базовый ритм спавна. */
+  seedInitial(width: number, height: number): void {
+    const baseSpawnX = BASE_WIDTH + PIPE_SPAWN_MARGIN;
+    const wideSpawnX = width + PIPE_SPAWN_MARGIN;
+
+    if (wideSpawnX <= baseSpawnX) {
+      return;
+    }
+
+    const firstSpawnFrame = PIPE_START_DELAY + PIPE_SPAWN_INTERVAL;
+    const targetXAtFirstSpawn =
+      baseSpawnX + WIDE_SCREEN_SEED_BLEND * (wideSpawnX - baseSpawnX);
+    const seedX = targetXAtFirstSpawn + firstSpawnFrame * this.pipeSpeed;
+
+    this.pipes.push(this.createPipe(height, seedX));
   }
 
   update(

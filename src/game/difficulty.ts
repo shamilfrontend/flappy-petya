@@ -26,8 +26,8 @@ export const DIFFICULTIES: DifficultySettings[] = [
     id: DIFFICULTY_LEVELS.Easy,
     label: 'Легкий',
     pipeGap: 140,
-    pipeSpeed: PIPE_SPEED / 2,
-    fgScrollSpeed: FG_SCROLL_SPEED / 2,
+    pipeSpeed: PIPE_SPEED / 1.5,
+    fgScrollSpeed: FG_SCROLL_SPEED / 1.5,
   },
   {
     id: DIFFICULTY_LEVELS.Medium,
