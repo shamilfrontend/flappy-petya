@@ -1,0 +1,533 @@
+import { Goose } from '../entities/goose';
+import { Pipes } from '../entities/pipes';
+import { drawGround, drawSky } from '../graphics/environment';
+import {
+  FOOTER_BUTTON_GAP,
+  getScoreBadgeY,
+  getRecordsLayout,
+  getScoreLayout,
+  getSplashLayout,
+} from '../graphics/ui-layout';
+import { initSprites, type Sprites } from '../graphics/sprites';
+import {
+  drawButton,
+  drawGameOverImage,
+  drawRecordsTab,
+  drawRecordsTable,
+  drawScoreBadge,
+  drawScorePanel,
+  drawSubtitle,
+  drawTitle,
+  layoutRecordsTabs,
+  drawPlayerNameButton,
+  measureButton,
+  measurePlayerNameButton,
+  type ButtonRect,
+} from '../graphics/ui-text';
+import { getCanvasPoint, isPointInRect, type PressEvent } from '../input/pointer';
+import { getPersonalBest, getTopRecordsByLevel, saveRecord } from '../lib/records';
+import { getSavedPlayerName, savePlayerName } from '../lib/player-name';
+import { NameInputOverlay } from '../ui/name-input';
+import {
+  applyCanvasSize,
+  getViewportState,
+  type ViewportState,
+} from '../lib/viewport';
+import {
+  FG_TILE_WIDTH,
+  GROUND_HEIGHT,
+  MAX_FRAME_DELTA,
+  MS_PER_FRAME,
+} from './config';
+import {
+  DIFFICULTIES,
+  DIFFICULTY_LEVELS,
+  getDifficultyById,
+  type DifficultyLevel,
+} from './difficulty';
+import { GAME_STATES, type GameState } from './states';
+
+const GOOSE_URL = `${import.meta.env.BASE_URL}static/goose.png`;
+const SPLASH_URL = `${import.meta.env.BASE_URL}static/petr-splash.png`;
+const GAME_OVER_URL = `${import.meta.env.BASE_URL}static/game-over-goose.png`;
+const RETRY_BUTTON_LABEL = 'Ещё раз';
+const PLAY_BUTTON_LABEL = 'Играть';
+const RECORDS_BUTTON_LABEL = 'Рекорды';
+const BACK_BUTTON_LABEL = 'Назад';
+const RESIZE_DEBOUNCE_MS = 100;
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.addEventListener('load', () => resolve(img));
+    img.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)));
+    img.src = src;
+  });
+}
+
+export class Game {
+  private canvas!: HTMLCanvasElement;
+  private ctx!: CanvasRenderingContext2D;
+  private viewport!: ViewportState;
+  private sprites!: Sprites;
+  private gameOverImg!: HTMLImageElement;
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+
+  private readonly goose = new Goose();
+  private readonly pipes = new Pipes();
+  private readonly nameInput = new NameInputOverlay();
+
+  private currentState: GameState = GAME_STATES.Splash;
+  private fgpos = 0;
+  private frames = 0;
+  private score = 0;
+  private playerName = getSavedPlayerName();
+  private personalBest = 0;
+  private isAwaitingName = false;
+  private okBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private recordsBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private playerNameBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private backBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private recordsTabBtns: ButtonRect[] = [];
+  private recordsLevelTab: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
+  private difficultyTabBtns: ButtonRect[] = [];
+  private playBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private selectedDifficulty: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
+  private fgScrollSpeed = getDifficultyById(DIFFICULTY_LEVELS.Medium).fgScrollSpeed;
+  private hasSavedCurrentScore = false;
+  private lastFrameTime = 0;
+
+  start(): void {
+    this.canvas = document.createElement('canvas');
+    this.viewport = getViewportState();
+
+    const ctx = this.canvas.getContext('2d');
+    if (!ctx) {
+      alert("Your browser doesn't support HTML5, please update to latest version");
+      return;
+    }
+    this.ctx = ctx;
+
+    applyCanvasSize(this.canvas, this.ctx, this.viewport);
+    document.body.appendChild(this.canvas);
+    this.bindInput();
+    this.bindResizeTracking();
+
+    Promise.all([
+      loadImage(GOOSE_URL),
+      loadImage(SPLASH_URL),
+      loadImage(GAME_OVER_URL),
+    ])
+      .then(([gooseImg, splashImg, gameOverImg]) => {
+        this.sprites = initSprites(gooseImg, splashImg);
+        this.gameOverImg = gameOverImg;
+        this.layoutUi();
+        this.applyDifficulty(this.selectedDifficulty);
+        this.run();
+      })
+      .catch((err) => {
+        console.error(err);
+        alert('Не удалось загрузить игровые ресурсы');
+      });
+  }
+
+  private layoutUi(): void {
+    const { logicalWidth, logicalHeight } = this.viewport;
+    const scoreLayout = getScoreLayout(logicalHeight);
+    const splashLayout = getSplashLayout(logicalHeight);
+    const recordsLayout = getRecordsLayout(logicalHeight);
+
+    const retryBtnSize = measureButton(this.ctx, RETRY_BUTTON_LABEL);
+    this.okBtn = {
+      x: (logicalWidth - retryBtnSize.width) / 2,
+      y: scoreLayout.retryButtonY,
+      width: retryBtnSize.width,
+      height: retryBtnSize.height,
+    };
+
+    const recordsBtnSize = measureButton(this.ctx, RECORDS_BUTTON_LABEL);
+    this.recordsBtn = {
+      x: (logicalWidth - recordsBtnSize.width) / 2,
+      y: splashLayout.footerStartY,
+      width: recordsBtnSize.width,
+      height: recordsBtnSize.height,
+    };
+
+    if (this.playerName) {
+      const playerNameBtnSize = measurePlayerNameButton(this.ctx, this.playerName);
+      this.playerNameBtn = {
+        x: (logicalWidth - playerNameBtnSize.width) / 2,
+        y: this.recordsBtn.y + this.recordsBtn.height + FOOTER_BUTTON_GAP,
+        width: playerNameBtnSize.width,
+        height: playerNameBtnSize.height,
+      };
+    }
+
+    const backBtnSize = measureButton(this.ctx, BACK_BUTTON_LABEL);
+    this.backBtn = {
+      x: (logicalWidth - backBtnSize.width) / 2,
+      y: recordsLayout.backButtonY,
+      width: backBtnSize.width,
+      height: backBtnSize.height,
+    };
+
+    this.recordsTabBtns = layoutRecordsTabs(
+      logicalWidth / 2,
+      recordsLayout.tabsY,
+      logicalWidth,
+      DIFFICULTIES.length,
+    );
+
+    this.difficultyTabBtns = layoutRecordsTabs(
+      logicalWidth / 2,
+      splashLayout.difficultyTabsY,
+      logicalWidth,
+      DIFFICULTIES.length,
+    );
+
+    const playBtnSize = measureButton(this.ctx, PLAY_BUTTON_LABEL);
+    this.playBtn = {
+      x: (logicalWidth - playBtnSize.width) / 2,
+      y: splashLayout.playButtonY,
+      width: playBtnSize.width,
+      height: playBtnSize.height,
+    };
+  }
+
+  private bindInput(): void {
+    const opts: AddEventListenerOptions = { passive: false };
+
+    if (window.PointerEvent) {
+      this.canvas.addEventListener('pointerdown', this.onPress, opts);
+      return;
+    }
+
+    this.canvas.addEventListener('mousedown', this.onPress);
+    this.canvas.addEventListener('touchstart', this.onPress, opts);
+  }
+
+  private bindResizeTracking(): void {
+    window.addEventListener('resize', this.onResize);
+    window.addEventListener('orientationchange', this.onResize);
+    window.visualViewport?.addEventListener('resize', this.onResize);
+    window.visualViewport?.addEventListener('scroll', this.onResize);
+
+    this.resizeObserver = new ResizeObserver(() => {
+      this.onResize();
+    });
+    this.resizeObserver.observe(document.documentElement);
+
+    requestAnimationFrame(() => {
+      this.resize();
+    });
+  }
+
+  private readonly onResize = (): void => {
+    if (this.resizeTimer !== null) {
+      clearTimeout(this.resizeTimer);
+    }
+
+    this.resizeTimer = setTimeout(() => {
+      this.resizeTimer = null;
+      this.resize();
+    }, RESIZE_DEBOUNCE_MS);
+  };
+
+  private resize(): void {
+    this.viewport = getViewportState();
+    applyCanvasSize(this.canvas, this.ctx, this.viewport);
+    this.layoutUi();
+  }
+
+  private applyDifficulty(level: DifficultyLevel): void {
+    const settings = getDifficultyById(level);
+    this.selectedDifficulty = level;
+    this.fgScrollSpeed = settings.fgScrollSpeed;
+    this.pipes.setDifficulty(settings);
+  }
+
+  private readonly onPress = (evt: PressEvent): void => {
+    if (this.isAwaitingName) {
+      return;
+    }
+
+    if (evt.cancelable) {
+      evt.preventDefault();
+    }
+
+    switch (this.currentState) {
+      case GAME_STATES.Splash: {
+        const point = getCanvasPoint(this.canvas, evt, this.viewport);
+        if (!point) {
+          break;
+        }
+
+        if (isPointInRect(point, this.recordsBtn)) {
+          this.recordsLevelTab = this.selectedDifficulty;
+          this.currentState = GAME_STATES.Records;
+          break;
+        }
+
+        if (this.playerName && isPointInRect(point, this.playerNameBtn)) {
+          void this.editPlayerName();
+          break;
+        }
+
+        if (isPointInRect(point, this.playBtn)) {
+          void this.startGameWithNamePrompt();
+          break;
+        }
+
+        const selectedIndex = this.difficultyTabBtns.findIndex((btn) =>
+          isPointInRect(point, btn),
+        );
+
+        if (selectedIndex >= 0) {
+          this.applyDifficulty(DIFFICULTIES[selectedIndex].id);
+        }
+        break;
+      }
+
+      case GAME_STATES.Records: {
+        const point = getCanvasPoint(this.canvas, evt, this.viewport);
+        if (!point) {
+          break;
+        }
+
+        if (isPointInRect(point, this.backBtn)) {
+          this.currentState = GAME_STATES.Splash;
+          break;
+        }
+
+        const tabIndex = this.recordsTabBtns.findIndex((btn) =>
+          isPointInRect(point, btn),
+        );
+
+        if (tabIndex >= 0) {
+          this.recordsLevelTab = DIFFICULTIES[tabIndex].id;
+        }
+        break;
+      }
+
+      case GAME_STATES.Game:
+        this.goose.jump();
+        break;
+
+      case GAME_STATES.Score: {
+        const point = getCanvasPoint(this.canvas, evt, this.viewport);
+        if (point && isPointInRect(point, this.okBtn)) {
+          this.pipes.reset();
+          this.currentState = GAME_STATES.Splash;
+          this.score = 0;
+          this.hasSavedCurrentScore = false;
+          this.layoutUi();
+        }
+        break;
+      }
+    }
+  };
+
+  private async editPlayerName(): Promise<void> {
+    if (this.isAwaitingName) {
+      return;
+    }
+
+    this.isAwaitingName = true;
+
+    const result = await this.nameInput.prompt(this.playerName, {
+      submitLabel: 'Сохранить',
+    });
+    this.isAwaitingName = false;
+
+    if (!result.confirmed) {
+      return;
+    }
+
+    this.playerName = result.name;
+    savePlayerName(result.name);
+    this.layoutUi();
+  }
+
+  private async startGameWithNamePrompt(): Promise<void> {
+    if (this.isAwaitingName) {
+      return;
+    }
+
+    if (this.playerName) {
+      this.beginGame(this.playerName);
+      return;
+    }
+
+    this.isAwaitingName = true;
+
+    const result = await this.nameInput.prompt('');
+    this.isAwaitingName = false;
+
+    if (!result.confirmed) {
+      return;
+    }
+
+    this.beginGame(result.name);
+  }
+
+  private beginGame(name: string): void {
+    this.playerName = name;
+    savePlayerName(name);
+    this.personalBest = getPersonalBest(this.playerName, this.selectedDifficulty);
+    this.score = 0;
+    this.hasSavedCurrentScore = false;
+    this.layoutUi();
+    this.currentState = GAME_STATES.Game;
+    this.pipes.reset();
+    this.goose.jump();
+  }
+
+  private run(): void {
+    const loop = (timestamp: number): void => {
+      if (this.lastFrameTime === 0) {
+        this.lastFrameTime = timestamp;
+      }
+
+      const deltaMs = timestamp - this.lastFrameTime;
+      this.lastFrameTime = timestamp;
+      const dt = Math.min(deltaMs / MS_PER_FRAME, MAX_FRAME_DELTA);
+
+      this.update(dt);
+      this.render();
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+
+  private update(dt: number): void {
+    const { logicalHeight } = this.viewport;
+    this.frames += dt;
+
+    if (this.currentState !== GAME_STATES.Score) {
+      this.fgpos =
+        (this.fgpos - this.fgScrollSpeed * dt) % FG_TILE_WIDTH;
+    } else if (!this.hasSavedCurrentScore) {
+      saveRecord(this.playerName, this.selectedDifficulty, this.score);
+      this.personalBest = Math.max(this.personalBest, this.score);
+      this.hasSavedCurrentScore = true;
+    }
+
+    if (this.currentState === GAME_STATES.Game) {
+      this.pipes.update(
+        this.viewport.logicalWidth,
+        logicalHeight,
+        this.goose,
+        dt,
+        () => {
+          this.currentState = GAME_STATES.Score;
+        },
+        () => {
+          this.score++;
+        },
+      );
+    }
+
+    this.goose.update(
+      this.currentState,
+      logicalHeight,
+      GROUND_HEIGHT,
+      this.frames,
+      dt,
+      () => {
+        if (this.currentState === GAME_STATES.Game) {
+          this.currentState = GAME_STATES.Score;
+        }
+      },
+    );
+  }
+
+  private render(): void {
+    const { ctx, viewport, sprites } = this;
+    const { logicalWidth, logicalHeight } = viewport;
+    const centerX = logicalWidth / 2;
+    const splashLayout = getSplashLayout(logicalHeight);
+    const scoreLayout = getScoreLayout(logicalHeight);
+    const recordsLayout = getRecordsLayout(logicalHeight);
+
+    drawSky(ctx, logicalWidth, logicalHeight);
+    this.pipes.draw(ctx);
+
+    if (this.currentState === GAME_STATES.Splash) {
+      const splash = sprites.petrSplash;
+      sprites.petrSplash.draw(
+        ctx,
+        centerX - splash.width / 2,
+        this.goose.y - splash.height / 2,
+      );
+    } else if (this.currentState !== GAME_STATES.Records) {
+      this.goose.draw(ctx, sprites);
+    }
+
+    drawGround(ctx, logicalWidth, logicalHeight, this.fgpos);
+
+    if (this.currentState === GAME_STATES.Splash) {
+      drawTitle(ctx, 'Flappy Petr', centerX, splashLayout.titleY);
+      drawSubtitle(ctx, 'Выбери уровень', centerX, splashLayout.subtitleY);
+
+      DIFFICULTIES.forEach((difficulty, index) => {
+        drawRecordsTab(
+          ctx,
+          difficulty.label,
+          this.difficultyTabBtns[index],
+          difficulty.id === this.selectedDifficulty,
+        );
+      });
+
+      drawButton(ctx, PLAY_BUTTON_LABEL, this.playBtn, true);
+      drawButton(ctx, RECORDS_BUTTON_LABEL, this.recordsBtn);
+
+      if (this.playerName) {
+        drawPlayerNameButton(ctx, this.playerName, this.playerNameBtn);
+      }
+    }
+
+    if (this.currentState === GAME_STATES.Records) {
+      drawTitle(ctx, 'Рекорды', centerX, recordsLayout.titleY);
+
+      DIFFICULTIES.forEach((difficulty, index) => {
+        drawRecordsTab(
+          ctx,
+          difficulty.label,
+          this.recordsTabBtns[index],
+          difficulty.id === this.recordsLevelTab,
+        );
+      });
+
+      drawRecordsTable(
+        ctx,
+        getTopRecordsByLevel(this.recordsLevelTab),
+        centerX,
+        recordsLayout.tableStartY,
+        logicalWidth,
+      );
+      drawButton(ctx, BACK_BUTTON_LABEL, this.backBtn);
+    }
+
+    if (this.currentState === GAME_STATES.Score) {
+      drawSubtitle(ctx, 'Игра окончена', centerX, scoreLayout.subtitleY);
+      drawGameOverImage(
+        ctx,
+        this.gameOverImg,
+        centerX,
+        scoreLayout.imageY,
+        scoreLayout.imageHeight,
+      );
+      drawScorePanel(
+        ctx,
+        this.score,
+        this.personalBest,
+        centerX,
+        scoreLayout.panelY,
+      );
+      drawButton(ctx, RETRY_BUTTON_LABEL, this.okBtn);
+    } else if (this.currentState === GAME_STATES.Game) {
+      drawScoreBadge(ctx, this.score, centerX, getScoreBadgeY(logicalHeight));
+    }
+  }
+}
