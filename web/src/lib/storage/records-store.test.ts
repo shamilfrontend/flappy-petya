@@ -41,8 +41,8 @@ describe('records-store', () => {
       });
 
       await expect(fetchLeaderboard(db, 'easy')).resolves.toEqual([
-        { name: 'Alice', level: 'easy', score: 10 },
         { name: 'Bob', level: 'easy', score: 20 },
+        { name: 'Alice', level: 'easy', score: 10 },
       ]);
     });
 
@@ -52,6 +52,21 @@ describe('records-store', () => {
       await fetchLeaderboard(db, 'hard', 5);
 
       expect(getDocs).toHaveBeenCalledOnce();
+    });
+
+    it('deduplicates records with the same player name', async () => {
+      getDocs.mockResolvedValue({
+        docs: [
+          { data: () => ({ name: 'ShamilFrontend', score: 12 }) },
+          { data: () => ({ name: 'Псс', score: 9 }) },
+          { data: () => ({ name: 'ShamilFrontend', score: 1 }) },
+        ],
+      });
+
+      await expect(fetchLeaderboard(db, 'medium')).resolves.toEqual([
+        { name: 'ShamilFrontend', level: 'medium', score: 12 },
+        { name: 'Псс', level: 'medium', score: 9 },
+      ]);
     });
   });
 

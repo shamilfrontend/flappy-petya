@@ -12,10 +12,13 @@ import {
 } from 'firebase/firestore';
 import type { DifficultyLevel } from '../../game/difficulty';
 import {
+  deduplicateLeaderboardByName,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
   type LeaderboardEntry,
 } from './types';
+
+const LEADERBOARD_FETCH_BUFFER = 5;
 
 function leaderboardCollection(db: Firestore, level: DifficultyLevel) {
   return collection(db, 'leaderboard', level, 'scores');
@@ -30,15 +33,16 @@ export async function fetchLeaderboard(
   level: DifficultyLevel,
   maxEntries = TOP_RECORDS_PER_LEVEL,
 ): Promise<GameRecord[]> {
+  const fetchLimit = Math.max(maxEntries * LEADERBOARD_FETCH_BUFFER, maxEntries);
   const snapshot = await getDocs(
     query(
       leaderboardCollection(db, level),
       orderBy('score', 'desc'),
-      limit(maxEntries),
+      limit(fetchLimit),
     ),
   );
 
-  return snapshot.docs
+  const records = snapshot.docs
     .map((item) => {
       const data = item.data() as Partial<LeaderboardEntry>;
       if (typeof data.name !== 'string' || typeof data.score !== 'number') {
@@ -52,6 +56,8 @@ export async function fetchLeaderboard(
       };
     })
     .filter((record): record is GameRecord => Boolean(record?.name));
+
+  return deduplicateLeaderboardByName(records, maxEntries);
 }
 
 export async function upsertLeaderboardEntry(

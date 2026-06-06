@@ -38,6 +38,7 @@ import {
 } from './records-store';
 import {
   createDefaultProfile,
+  deduplicateLeaderboardByName,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
   type PlayerProfile,
@@ -306,33 +307,11 @@ function mergeTopRecords(
   level: DifficultyLevel,
   ...sources: GameRecord[][]
 ): GameRecord[] {
-  const byName = new Map<string, GameRecord>();
+  const combined = sources
+    .flat()
+    .filter((record) => record.level === level);
 
-  sources.forEach((source) => {
-    source.forEach((record) => {
-      if (record.level !== level) {
-        return;
-      }
-
-      const trimmedName = record.name.trim();
-      if (!trimmedName) {
-        return;
-      }
-
-      const normalized: GameRecord = {
-        name: trimmedName,
-        level,
-        score: record.score,
-      };
-      const existing = byName.get(trimmedName);
-
-      if (!existing || normalized.score > existing.score) {
-        byName.set(trimmedName, normalized);
-      }
-    });
-  });
-
-  return [...byName.values()].sort((a, b) => b.score - a.score);
+  return deduplicateLeaderboardByName(combined);
 }
 
 export function getTopRecordsByLevel(
@@ -353,7 +332,7 @@ export function getTopRecordsByLevel(
     return [];
   }
 
-  return leaderboard.slice(0, limit);
+  return deduplicateLeaderboardByName(leaderboard, limit);
 }
 
 export function saveRecord(

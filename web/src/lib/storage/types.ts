@@ -19,6 +19,35 @@ export interface LeaderboardEntry {
 
 export const TOP_RECORDS_PER_LEVEL = 10;
 
+export function deduplicateLeaderboardByName(
+  records: GameRecord[],
+  maxEntries = TOP_RECORDS_PER_LEVEL,
+): GameRecord[] {
+  const byName = new Map<string, GameRecord>();
+
+  for (const record of records) {
+    const trimmedName = record.name.trim();
+    if (!trimmedName) {
+      continue;
+    }
+
+    const normalized: GameRecord = {
+      name: trimmedName,
+      level: record.level,
+      score: record.score,
+    };
+    const existing = byName.get(trimmedName);
+
+    if (!existing || normalized.score > existing.score) {
+      byName.set(trimmedName, normalized);
+    }
+  }
+
+  return [...byName.values()]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxEntries);
+}
+
 export function createEmptyBests(): Record<DifficultyLevel, number> {
   return {
     easy: 0,

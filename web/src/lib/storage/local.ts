@@ -1,5 +1,6 @@
 import type { DifficultyLevel } from '../../game/difficulty';
 import {
+  deduplicateLeaderboardByName,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
 } from './types';
@@ -122,9 +123,9 @@ function pruneRecords(records: GameRecord[]): GameRecord[] {
   const levels = new Set(records.map((record) => record.level));
 
   return [...levels].flatMap((level) =>
-    records
-      .filter((record) => record.level === level)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, TOP_RECORDS_PER_LEVEL),
+    deduplicateLeaderboardByName(
+      records.filter((record) => record.level === level),
+      TOP_RECORDS_PER_LEVEL,
+    ),
   );
 }

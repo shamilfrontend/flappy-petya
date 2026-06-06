@@ -93,5 +93,21 @@ describe('local storage', () => {
         { name: 'Alice', level: 'easy', score: 10 },
       ]);
     });
+
+    it('deduplicates legacy records with the same name', () => {
+      localStorage.setItem(
+        'flappy-petya-records',
+        JSON.stringify([
+          { name: 'ShamilFrontend', level: 'medium', score: 12 },
+          { name: 'Псс', level: 'medium', score: 9 },
+          { name: 'ShamilFrontend', level: 'medium', score: 1 },
+        ]),
+      );
+
+      expect(getLocalTopRecordsByLevel('medium')).toEqual([
+        { name: 'ShamilFrontend', level: 'medium', score: 12 },
+        { name: 'Псс', level: 'medium', score: 9 },
+      ]);
+    });
   });
 });
