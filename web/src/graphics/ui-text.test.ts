@@ -357,12 +357,12 @@ describe('ui-text helpers', () => {
       const ctx = createMockContext(50);
       ctx.measureText = vi.fn((text: string) => ({
         width: text.length * 8,
-      })) as CanvasRenderingContext2D['measureText'];
+      })) as unknown as CanvasRenderingContext2D['measureText'];
       const narrowRect = { x: 10, y: 20, width: 160, height: 48 };
 
       drawPlayerNameButton(ctx, 'Шамиль Алисултанов', narrowRect);
 
-      const renderedName = String(ctx.fillText.mock.calls[0]?.[0]);
+      const renderedName = String(vi.mocked(ctx.fillText).mock.calls[0]?.[0]);
 
       expect(renderedName.endsWith('…')).toBe(true);
       expect(renderedName.length).toBeLessThan('Шамиль Алисултанов'.length);

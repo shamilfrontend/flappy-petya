@@ -11,7 +11,10 @@ const storageMocks = vi.hoisted(() => ({
   refreshLeaderboard: vi.fn(() => Promise.resolve()),
   saveRecord: vi.fn(),
   saveSelectedDifficulty: vi.fn(),
-  signInWithGoogleAccount: vi.fn(() => Promise.resolve({ ok: true })),
+  signInWithGoogleAccount: vi.fn(
+    (): Promise<{ ok: boolean; errorMessage?: string }> =>
+      Promise.resolve({ ok: true }),
+  ),
   signOutFromGame: vi.fn(() => Promise.resolve()),
 }));
 
