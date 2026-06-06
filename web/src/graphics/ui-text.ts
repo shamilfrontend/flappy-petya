@@ -1,3 +1,4 @@
+import { MEDAL_LABELS, MEDAL_TYPES, type MedalType } from '../game/medals';
 import { THEME } from './theme';
 import { TOP_RECORDS_PER_LEVEL, type GameRecord } from '../lib/records';
 
@@ -228,15 +229,22 @@ export function drawGameOverImage(
   );
 }
 
+export interface ScorePanelOptions {
+  medal?: MedalType;
+}
+
 export function drawScorePanel(
   ctx: CanvasRenderingContext2D,
   score: number,
   best: number,
   centerX: number,
   y: number,
+  options: ScorePanelOptions = {},
 ): { width: number; height: number } {
+  const medal = options.medal ?? MEDAL_TYPES.None;
+  const hasMedal = medal !== MEDAL_TYPES.None;
   const panelW = 200;
-  const panelH = 90;
+  const panelH = hasMedal ? 118 : 90;
   const panelX = centerX - panelW / 2;
   const panelY = y - panelH / 2;
 
@@ -252,6 +260,7 @@ export function drawScorePanel(
   const valueFont = 'bold 22px system-ui, sans-serif';
   const row1Y = panelY + 30;
   const row2Y = panelY + 62;
+  const row3Y = panelY + 94;
 
   ctx.save();
   ctx.font = labelFont;
@@ -261,13 +270,126 @@ export function drawScorePanel(
   ctx.fillText('Счёт', panelX + 20, row1Y);
   ctx.fillText('Рекорд', panelX + 20, row2Y);
 
+  if (hasMedal) {
+    ctx.fillText('Медаль', panelX + 20, row3Y);
+  }
+
   ctx.font = valueFont;
   ctx.textAlign = 'right';
   ctx.fillText(score.toString(), panelX + panelW - 20, row1Y);
   ctx.fillText(best.toString(), panelX + panelW - 20, row2Y);
+
+  if (hasMedal) {
+    ctx.font = 'bold 18px system-ui, sans-serif';
+    ctx.fillText(MEDAL_LABELS[medal], panelX + panelW - 20, row3Y);
+  }
+
   ctx.restore();
 
   return { width: panelW, height: panelH };
+}
+
+const SOUND_BUTTON_SIZE = 40;
+
+export function measureSoundButton(): ButtonRect {
+  return {
+    x: 0,
+    y: 0,
+    width: SOUND_BUTTON_SIZE,
+    height: SOUND_BUTTON_SIZE,
+  };
+}
+
+export function drawSoundButton(
+  ctx: CanvasRenderingContext2D,
+  rect: ButtonRect,
+  isMuted: boolean,
+): void {
+  ctx.fillStyle = THEME.panel;
+  ctx.strokeStyle = THEME.panelBorder;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(rect.x, rect.y, rect.width, rect.height, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  drawOutlinedText(
+    ctx,
+    isMuted ? '🔇' : '🔊',
+    rect.x + rect.width / 2,
+    rect.y + rect.height / 2,
+    {
+      font: '20px system-ui, sans-serif',
+      fill: THEME.outline,
+      strokeWidth: 1,
+    },
+  );
+}
+
+export function measurePauseButton(): ButtonRect {
+  return measureSoundButton();
+}
+
+export function drawPauseButton(
+  ctx: CanvasRenderingContext2D,
+  rect: ButtonRect,
+): void {
+  ctx.fillStyle = THEME.panel;
+  ctx.strokeStyle = THEME.panelBorder;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(rect.x, rect.y, rect.width, rect.height, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  const barWidth = 6;
+  const barHeight = 18;
+  const gap = 6;
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+
+  ctx.save();
+  ctx.fillStyle = THEME.outline;
+  ctx.fillRect(
+    centerX - gap / 2 - barWidth,
+    centerY - barHeight / 2,
+    barWidth,
+    barHeight,
+  );
+  ctx.fillRect(centerX + gap / 2, centerY - barHeight / 2, barWidth, barHeight);
+  ctx.restore();
+}
+
+export function drawPauseOverlay(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  centerX: number,
+  centerY: number,
+): void {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
+
+  drawSubtitle(ctx, 'Пауза', centerX, centerY);
+}
+
+const COUNTDOWN_LABELS = ['3', '2', '1', 'Поехали!'] as const;
+
+export function drawCountdown(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  y: number,
+  step: number,
+): void {
+  const label = COUNTDOWN_LABELS[Math.min(step, COUNTDOWN_LABELS.length - 1)] ?? '3';
+
+  drawOutlinedText(ctx, label, centerX, y, {
+    font: 'bold 56px system-ui, sans-serif',
+    fill: THEME.accent,
+    strokeWidth: 4,
+  });
 }
 
 export function measureButton(

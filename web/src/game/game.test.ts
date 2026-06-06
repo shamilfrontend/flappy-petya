@@ -15,6 +15,38 @@ const storageMocks = vi.hoisted(() => ({
 
 const getCanvasPointMock = vi.hoisted(() => vi.fn());
 
+const soundMocks = vi.hoisted(() => ({
+  play: vi.fn(),
+  setMuted: vi.fn(),
+  isMuted: vi.fn(() => false),
+  toggleMuted: vi.fn(() => true),
+}));
+
+const hapticMocks = vi.hoisted(() => ({
+  pulse: vi.fn(),
+  isSupported: vi.fn(() => true),
+}));
+
+vi.mock('../audio/sound', () => ({
+  getSoundManager: () => soundMocks,
+  SOUND_EVENTS: {
+    Jump: 'jump',
+    Score: 'score',
+    Hit: 'hit',
+    NewBest: 'newBest',
+    Tick: 'tick',
+  },
+}));
+
+vi.mock('../input/haptic', () => ({
+  getHapticManager: () => hapticMocks,
+  HAPTIC_EVENTS: {
+    Jump: 'jump',
+    Score: 'score',
+    Hit: 'hit',
+  },
+}));
+
 vi.mock('../ui/name-input', () => ({
   NameInputOverlay: class {
     prompt = nameInputPrompt;
@@ -37,6 +69,7 @@ vi.mock('../graphics/environment', () => ({
 vi.mock('../graphics/ui-text', () => ({
   measureButton: vi.fn(() => ({ x: 0, y: 0, width: 100, height: 40 })),
   measurePlayerNameButton: vi.fn(() => ({ x: 0, y: 0, width: 120, height: 40 })),
+  measureSoundButton: vi.fn(() => ({ x: 0, y: 0, width: 40, height: 40 })),
   layoutRecordsTabs: vi.fn((_centerX: number, y: number, _width: number, count: number) =>
     Array.from({ length: count }, (_, index) => ({
       x: index * 106,
@@ -55,6 +88,10 @@ vi.mock('../graphics/ui-text', () => ({
   drawScoreBadge: vi.fn(),
   drawScorePanel: vi.fn(),
   drawGameOverImage: vi.fn(),
+  drawSoundButton: vi.fn(),
+  drawCountdown: vi.fn(),
+  drawPauseButton: vi.fn(),
+  drawPauseOverlay: vi.fn(),
 }));
 
 vi.mock('../graphics/sprites', () => ({
@@ -73,11 +110,14 @@ vi.mock('../input/pointer', async (importOriginal) => {
   };
 });
 
+import { drawPauseOverlay, drawRecordsTable, drawScoreBadge } from '../graphics/ui-text';
 import { hideAppLoader } from '../ui/app-loader';
 import {
   getSavedPlayerName,
   getSelectedDifficulty,
+  getTopRecordsByLevel,
   initStorage,
+  isLeaderboardLoading,
   refreshLeaderboard,
   savePlayerName,
   saveRecord,
@@ -85,7 +125,7 @@ import {
 } from '../lib/storage';
 import { GOOSE_JUMP } from './config';
 import { DIFFICULTIES, DIFFICULTY_LEVELS } from './difficulty';
-import { Game } from './game';
+import { Game, RESIZE_DEBOUNCE_MS } from './game';
 import { GAME_STATES } from './states';
 
 interface GamePrivate {
@@ -94,10 +134,18 @@ interface GamePrivate {
   playerName: string;
   hasSavedCurrentScore: boolean;
   personalBest: number;
+  isNewBest: boolean;
   selectedDifficulty: typeof DIFFICULTY_LEVELS[keyof typeof DIFFICULTY_LEVELS];
   goose: { velocity: number; y: number };
   onPress: (evt: MouseEvent) => void;
+  onResize: () => void;
   update: (dt: number) => void;
+  render: () => void;
+  resize: () => void;
+  canvas: HTMLCanvasElement;
+  soundBtn: { x: number; y: number; width: number; height: number };
+  pauseBtn: { x: number; y: number; width: number; height: number };
+  fgpos: number;
 }
 
 function accessGame(game: Game): GamePrivate {
@@ -218,6 +266,26 @@ describe('Game', () => {
     accessGame(game).update(dt);
   }
 
+  function finishCountdown(game: Game): void {
+    const internals = accessGame(game);
+
+    for (let frame = 0; frame < 200; frame += 1) {
+      runUpdate(game, 1);
+
+      if (internals.currentState === GAME_STATES.Game) {
+        return;
+      }
+    }
+  }
+
+  async function startActiveGame(playerName = 'Петя'): Promise<Game> {
+    const game = await startGame(playerName);
+    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
+    press(game);
+    finishCountdown(game);
+    return game;
+  }
+
   it('loads assets, initializes storage and hides app loader', async () => {
     await startGame();
 
@@ -248,7 +316,7 @@ describe('Game', () => {
 
     press(game);
 
-    expect(accessGame(game).currentState).toBe(GAME_STATES.Game);
+    expect(accessGame(game).currentState).toBe(GAME_STATES.Countdown);
     expect(savePlayerName).toHaveBeenCalledWith('Петя');
     expect(nameInputPrompt).not.toHaveBeenCalled();
   });
@@ -261,7 +329,7 @@ describe('Game', () => {
     press(game);
 
     await vi.waitFor(() => {
-      expect(accessGame(game).currentState).toBe(GAME_STATES.Game);
+      expect(accessGame(game).currentState).toBe(GAME_STATES.Countdown);
     });
 
     expect(nameInputPrompt).toHaveBeenCalledOnce();
@@ -318,6 +386,7 @@ describe('Game', () => {
     const game = await startGame('Петя');
     getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
     press(game);
+    finishCountdown(game);
 
     const internals = accessGame(game);
     expect(internals.currentState).toBe(GAME_STATES.Game);
@@ -326,6 +395,8 @@ describe('Game', () => {
     press(game);
 
     expect(internals.goose.velocity).toBe(-GOOSE_JUMP);
+    expect(soundMocks.play).toHaveBeenCalledWith('jump');
+    expect(hapticMocks.pulse).toHaveBeenCalledWith('jump');
   });
 
   it('saves score once when entering score screen', async () => {
@@ -363,6 +434,7 @@ describe('Game', () => {
     const game = await startGame('Петя');
     getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
     press(game);
+    finishCountdown(game);
 
     const internals = accessGame(game);
     internals.goose.y = 100;
@@ -447,5 +519,240 @@ describe('Game', () => {
 
     expect(internals.personalBest).toBe(12);
     expect(saveRecord).toHaveBeenCalledWith('Петя', DIFFICULTY_LEVELS.Medium, 12);
+    expect(soundMocks.play).toHaveBeenCalledWith('newBest');
+  });
+
+  it('shows alert and exits when canvas 2d context is unavailable', () => {
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null);
+
+    const game = new Game();
+    game.start();
+
+    expect(window.alert).toHaveBeenCalledWith(
+      "Your browser doesn't support HTML5, please update to latest version",
+    );
+    expect(document.querySelector('canvas')).toBeNull();
+  });
+
+  it('shows alert when asset loading fails', async () => {
+    vi.stubGlobal('Image', function FailingImage(this: {
+      listeners: Map<string, Array<() => void>>;
+      source: string;
+      addEventListener: (event: string, listener: () => void) => void;
+    }) {
+      this.listeners = new Map();
+
+      Object.defineProperty(this, 'src', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return this.source;
+        },
+        set(value: string) {
+          this.source = value;
+          queueMicrotask(() => {
+            this.listeners.get('error')?.forEach((listener: () => void) => listener());
+          });
+        },
+      });
+
+      this.addEventListener = (event: string, listener: () => void) => {
+        const handlers = this.listeners.get(event) ?? [];
+        handlers.push(listener);
+        this.listeners.set(event, handlers);
+      };
+    } as unknown as typeof Image);
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const game = new Game();
+    game.start();
+
+    await vi.waitFor(() => {
+      expect(window.alert).toHaveBeenCalledWith('Не удалось загрузить игровые ресурсы');
+    });
+
+    expect(hideAppLoader).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('debounces resize handling', async () => {
+    vi.useFakeTimers();
+    const game = await startGame();
+    const internals = accessGame(game);
+    const resizeSpy = vi.spyOn(internals, 'resize');
+
+    internals.onResize();
+    internals.onResize();
+    internals.onResize();
+
+    expect(resizeSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(RESIZE_DEBOUNCE_MS);
+
+    expect(resizeSpy).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it('binds pointer events when supported', async () => {
+    const addEventListener = vi.spyOn(HTMLCanvasElement.prototype, 'addEventListener');
+    Object.defineProperty(window, 'PointerEvent', {
+      configurable: true,
+      value: class PointerEvent {},
+    });
+
+    await startGame();
+
+    expect(addEventListener).toHaveBeenCalledWith(
+      'pointerdown',
+      expect.any(Function),
+      { passive: false },
+    );
+    addEventListener.mockRestore();
+  });
+
+  it('falls back to mouse and touch events without pointer support', async () => {
+    const addEventListener = vi.spyOn(HTMLCanvasElement.prototype, 'addEventListener');
+    Object.defineProperty(window, 'PointerEvent', {
+      configurable: true,
+      value: undefined,
+    });
+
+    await startGame();
+
+    expect(addEventListener).toHaveBeenCalledWith('mousedown', expect.any(Function));
+    expect(addEventListener).toHaveBeenCalledWith(
+      'touchstart',
+      expect.any(Function),
+      { passive: false },
+    );
+    addEventListener.mockRestore();
+  });
+
+  it('renders score badge during active game', async () => {
+    const game = await startGame('Петя');
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Game;
+    internals.score = 4;
+
+    internals.render();
+
+    expect(drawScoreBadge).toHaveBeenCalled();
+  });
+
+  it('renders records table with loading state', async () => {
+    const game = await startGame();
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Records;
+    vi.mocked(getTopRecordsByLevel).mockReturnValue([]);
+    vi.mocked(isLeaderboardLoading).mockReturnValue(true);
+
+    internals.render();
+
+    expect(drawRecordsTable).toHaveBeenCalledWith(
+      expect.anything(),
+      [],
+      expect.any(Number),
+      expect.any(Number),
+      expect.any(Number),
+      true,
+    );
+  });
+
+  it('toggles sound mute from splash screen', async () => {
+    const game = await startGame();
+    const { soundBtn } = accessGame(game);
+    getCanvasPointMock.mockReturnValue({
+      x: soundBtn.x + soundBtn.width / 2,
+      y: soundBtn.y + soundBtn.height / 2,
+    });
+
+    press(game);
+
+    expect(soundMocks.toggleMuted).toHaveBeenCalledOnce();
+  });
+
+  it('enters countdown and ignores jump input until game starts', async () => {
+    const game = await startGame('Петя');
+    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
+    press(game);
+
+    const internals = accessGame(game);
+    expect(internals.currentState).toBe(GAME_STATES.Countdown);
+
+    getCanvasPointMock.mockReturnValue(null);
+    press(game);
+
+    expect(internals.currentState).toBe(GAME_STATES.Countdown);
+    expect(internals.goose.velocity).toBe(0);
+  });
+
+  it('transitions from countdown to active game', async () => {
+    const game = await startGame('Петя');
+    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
+    press(game);
+
+    finishCountdown(game);
+
+    expect(accessGame(game).currentState).toBe(GAME_STATES.Game);
+  });
+
+  it('pauses active game from pause button', async () => {
+    const game = await startActiveGame();
+    const { pauseBtn } = accessGame(game);
+    getCanvasPointMock.mockReturnValue({
+      x: pauseBtn.x + pauseBtn.width / 2,
+      y: pauseBtn.y + pauseBtn.height / 2,
+    });
+
+    press(game);
+
+    expect(accessGame(game).currentState).toBe(GAME_STATES.Paused);
+  });
+
+  it('freezes gameplay while paused', async () => {
+    const game = await startActiveGame();
+    const internals = accessGame(game);
+    const initialFgpos = internals.fgpos;
+    const initialY = internals.goose.y;
+    internals.currentState = GAME_STATES.Paused;
+
+    runUpdate(game, 5);
+
+    expect(internals.fgpos).toBe(initialFgpos);
+    expect(internals.goose.y).toBe(initialY);
+  });
+
+  it('resumes game from pause on tap', async () => {
+    const game = await startActiveGame();
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Paused;
+    getCanvasPointMock.mockReturnValue(null);
+
+    press(game);
+
+    expect(internals.currentState).toBe(GAME_STATES.Game);
+  });
+
+  it('renders pause overlay while paused', async () => {
+    const game = await startActiveGame();
+    const internals = accessGame(game);
+    internals.currentState = GAME_STATES.Paused;
+
+    internals.render();
+
+    expect(drawPauseOverlay).toHaveBeenCalled();
+  });
+
+  it('plays countdown tick sound on step change', async () => {
+    const game = await startGame('Петя');
+    getCanvasPointMock.mockReturnValueOnce({ x: 160, y: 222 });
+    press(game);
+    soundMocks.play.mockClear();
+
+    for (let frame = 0; frame < 50; frame += 1) {
+      runUpdate(game, 1);
+    }
+
+    expect(soundMocks.play).toHaveBeenCalledWith('tick');
   });
 });

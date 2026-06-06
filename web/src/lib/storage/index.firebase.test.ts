@@ -244,4 +244,54 @@ describe('storage index (firebase mode)', () => {
       expect.arrayContaining([{ name: 'Петя', level: 'medium', score: 3 }]),
     );
   });
+
+  it('logs and keeps failed firebase task in queue', async () => {
+    const taskError = new Error('network failed');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    recordsStoreMocks.upsertLeaderboardEntry.mockRejectedValueOnce(taskError);
+    const { initStorage, savePlayerName, saveRecord } = await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+    saveRecord('Петя', 'easy', 5);
+
+    await vi.waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith(
+        'Firebase storage task failed',
+        taskError,
+      );
+    });
+
+    consoleError.mockRestore();
+  });
+
+  it('clears loading flag when leaderboard fetch fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    recordsStoreMocks.fetchLeaderboard.mockRejectedValue(new Error('fetch failed'));
+    const { initStorage, isLeaderboardLoading } = await loadStorageModule();
+
+    await initStorage();
+
+    expect(isLeaderboardLoading()).toBe(false);
+    expect(consoleError).toHaveBeenCalledWith(
+      'Failed to load leaderboards',
+      expect.any(Error),
+    );
+    consoleError.mockRestore();
+  });
+
+  it('enqueues firebase save when selected difficulty changes', async () => {
+    const { initStorage, saveSelectedDifficulty } = await loadStorageModule();
+
+    await initStorage();
+    saveSelectedDifficulty('hard');
+
+    await vi.waitFor(() => {
+      expect(playerStoreMocks.savePlayerProfile).toHaveBeenCalledWith(
+        db,
+        'uid-1',
+        expect.objectContaining({ selectedDifficulty: 'hard' }),
+      );
+    });
+  });
 });

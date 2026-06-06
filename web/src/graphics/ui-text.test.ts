@@ -1,5 +1,9 @@
+import { MEDAL_TYPES } from '../game/medals';
 import {
   drawButton,
+  drawCountdown,
+  drawPauseButton,
+  drawPauseOverlay,
   drawGameOverImage,
   drawHint,
   drawPlayerNameButton,
@@ -7,13 +11,16 @@ import {
   drawRecordsTable,
   drawScoreBadge,
   drawScorePanel,
+  drawSoundButton,
   drawSubtitle,
   drawTitle,
   drawTitleWithLogo,
   getRecordsPanelWidth,
   layoutRecordsTabs,
   measureButton,
+  measurePauseButton,
   measurePlayerNameButton,
+  measureSoundButton,
 } from './ui-text';
 
 function createMockContext(textWidth: number): CanvasRenderingContext2D {
@@ -30,6 +37,7 @@ function createMockContext(textWidth: number): CanvasRenderingContext2D {
     beginPath: vi.fn(),
     roundRect: vi.fn(),
     fill: vi.fn(),
+    fillRect: vi.fn(),
     stroke: vi.fn(),
     strokeText: vi.fn(),
     fillText: vi.fn(),
@@ -44,6 +52,23 @@ function createMockContext(textWidth: number): CanvasRenderingContext2D {
 }
 
 describe('ui-text helpers', () => {
+  describe('measureSoundButton', () => {
+    it('returns fixed square button size', () => {
+      expect(measureSoundButton()).toEqual({
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 40,
+      });
+    });
+  });
+
+  describe('measurePauseButton', () => {
+    it('matches sound button size', () => {
+      expect(measurePauseButton()).toEqual(measureSoundButton());
+    });
+  });
+
   describe('measureButton', () => {
     it('computes button size from label width', () => {
       const ctx = createMockContext(80);
@@ -129,6 +154,49 @@ describe('ui-text helpers', () => {
       });
       expect(ctx.fillText).toHaveBeenCalledWith('Счёт', 80, 185);
       expect(ctx.fillText).toHaveBeenCalledWith('7', 240, 185);
+    });
+
+    it('draws score panel with medal row', () => {
+      const ctx = createMockContext(40);
+
+      expect(drawScorePanel(ctx, 25, 25, 160, 200, {
+        medal: MEDAL_TYPES.Silver,
+      })).toEqual({
+        width: 200,
+        height: 118,
+      });
+      expect(ctx.fillText).toHaveBeenCalledWith('Медаль', 80, 235);
+      expect(ctx.fillText).toHaveBeenCalledWith('Серебро', 240, 235);
+    });
+
+    it('draws sound button with mute state', () => {
+      const ctx = createMockContext(20);
+
+      drawSoundButton(ctx, { x: 10, y: 10, width: 40, height: 40 }, false);
+      drawSoundButton(ctx, { x: 10, y: 10, width: 40, height: 40 }, true);
+
+      expect(ctx.fillText).toHaveBeenCalledWith('🔊', 30, 30);
+      expect(ctx.fillText).toHaveBeenCalledWith('🔇', 30, 30);
+    });
+
+    it('draws pause button and overlay', () => {
+      const ctx = createMockContext(20);
+
+      drawPauseButton(ctx, rect);
+      drawPauseOverlay(ctx, 320, 480, 160, 240);
+
+      expect(ctx.fillRect).toHaveBeenCalledWith(0, 0, 320, 480);
+      expect(ctx.fillText).toHaveBeenCalledWith('Пауза', 160, 240);
+    });
+
+    it('draws countdown labels by step', () => {
+      const ctx = createMockContext(40);
+
+      drawCountdown(ctx, 160, 200, 0);
+      drawCountdown(ctx, 160, 200, 3);
+
+      expect(ctx.fillText).toHaveBeenCalledWith('3', 160, 200);
+      expect(ctx.fillText).toHaveBeenCalledWith('Поехали!', 160, 200);
     });
 
     it('draws default and selected buttons', () => {

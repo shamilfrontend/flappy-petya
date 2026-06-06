@@ -9,6 +9,7 @@ export interface SplashLayout {
   difficultyTabsY: number;
   playButtonY: number;
   footerStartY: number;
+  soundButtonY: number;
 }
 
 export interface ScoreLayout {
@@ -35,7 +36,12 @@ export function getSplashLayout(height: number): SplashLayout {
     difficultyTabsY,
     playButtonY: difficultyTabsY + SPLASH_TAB_HEIGHT + SPLASH_PLAY_GAP,
     footerStartY: height * 0.66,
+    soundButtonY: height * 0.58,
   };
+}
+
+export function getCountdownY(height: number): number {
+  return height * 0.42;
 }
 
 const RECORDS_TAB_HEIGHT = 36;
@@ -64,4 +70,21 @@ export function getScoreLayout(height: number): ScoreLayout {
 
 export function getScoreBadgeY(height: number): number {
   return height * 0.075;
+}
+
+const PAUSE_BUTTON_SIZE = 40;
+const PAUSE_BUTTON_MARGIN = 16;
+
+export function getPauseButtonRect(width: number, badgeY: number): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  return {
+    x: width - PAUSE_BUTTON_SIZE - PAUSE_BUTTON_MARGIN,
+    y: badgeY - PAUSE_BUTTON_SIZE / 2,
+    width: PAUSE_BUTTON_SIZE,
+    height: PAUSE_BUTTON_SIZE,
+  };
 }

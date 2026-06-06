@@ -7,8 +7,13 @@ import {
   PIPE_START_DELAY,
 } from '../game/config';
 import { DIFFICULTIES } from '../game/difficulty';
+import { drawObstacle } from '../graphics/environment';
 import { Goose } from './goose';
 import { Pipes } from './pipes';
+
+vi.mock('../graphics/environment', () => ({
+  drawObstacle: vi.fn(),
+}));
 
 describe('Pipes', () => {
   const height = 480;
@@ -184,5 +189,16 @@ describe('Pipes', () => {
     expect(onScore).not.toHaveBeenCalled();
     expect(GOOSE_X).toBeGreaterThan(OBSTACLE_WIDTH);
     expect(PIPE_SPAWN_MARGIN).toBeGreaterThan(0);
+  });
+
+  it('draws each pipe as top and bottom obstacles', () => {
+    const ctx = {} as CanvasRenderingContext2D;
+    goose.y = 280;
+    pipes.seedInitial(width, height);
+
+    pipes.draw(ctx);
+
+    expect(drawObstacle).toHaveBeenCalled();
+    expect(vi.mocked(drawObstacle).mock.calls.length % 2).toBe(0);
   });
 });

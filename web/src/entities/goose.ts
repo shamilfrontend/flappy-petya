@@ -36,7 +36,11 @@ export class Goose {
     onGroundHit?: () => void,
   ): void {
     const animInterval =
-      state === GAME_STATES.Splash || state === GAME_STATES.Records ? 10 : 5;
+      state === GAME_STATES.Splash
+      || state === GAME_STATES.Records
+      || state === GAME_STATES.Countdown
+        ? 10
+        : 5;
     this.animAccumulator += dt;
 
     while (this.animAccumulator >= animInterval) {
@@ -44,7 +48,15 @@ export class Goose {
       this.frame = (this.frame + 1) % this.animation.length;
     }
 
-    if (state === GAME_STATES.Splash || state === GAME_STATES.Records) {
+    if (state === GAME_STATES.Paused) {
+      return;
+    }
+
+    if (
+      state === GAME_STATES.Splash
+      || state === GAME_STATES.Records
+      || state === GAME_STATES.Countdown
+    ) {
       this.y =
         height -
         SPLASH_GOOSE_BASE_OFFSET +

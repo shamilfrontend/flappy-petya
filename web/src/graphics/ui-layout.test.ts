@@ -1,4 +1,6 @@
 import {
+  getCountdownY,
+  getPauseButtonRect,
   getRecordsLayout,
   getScoreBadgeY,
   getScoreLayout,
@@ -16,6 +18,22 @@ describe('ui layout', () => {
     expect(layout.difficultyTabsY).toBeCloseTo(149.76);
     expect(layout.playButtonY).toBeCloseTo(201.76);
     expect(layout.footerStartY).toBeCloseTo(316.8);
+    expect(layout.soundButtonY).toBeCloseTo(278.4);
+  });
+
+  it('computes countdown y from viewport height', () => {
+    expect(getCountdownY(height)).toBeCloseTo(201.6);
+  });
+
+  it('computes pause button rect near score badge', () => {
+    const badgeY = getScoreBadgeY(height);
+
+    expect(getPauseButtonRect(320, badgeY)).toEqual({
+      x: 264,
+      y: 16,
+      width: 40,
+      height: 40,
+    });
   });
 
   it('computes score layout from viewport height', () => {

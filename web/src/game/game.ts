@@ -1,8 +1,12 @@
+import { getSoundManager, SOUND_EVENTS } from '../audio/sound';
+import { getHapticManager, HAPTIC_EVENTS } from '../input/haptic';
 import { Goose } from '../entities/goose';
 import { Pipes } from '../entities/pipes';
 import { drawGround, drawSky } from '../graphics/environment';
 import {
   FOOTER_BUTTON_GAP,
+  getCountdownY,
+  getPauseButtonRect,
   getScoreBadgeY,
   getRecordsLayout,
   getScoreLayout,
@@ -11,11 +15,15 @@ import {
 import { initSprites, type Sprites } from '../graphics/sprites';
 import {
   drawButton,
+  drawCountdown,
+  drawPauseButton,
+  drawPauseOverlay,
   drawGameOverImage,
   drawRecordsTab,
   drawRecordsTable,
   drawScoreBadge,
   drawScorePanel,
+  drawSoundButton,
   drawSubtitle,
   drawTitle,
   drawTitleWithLogo,
@@ -23,8 +31,10 @@ import {
   drawPlayerNameButton,
   measureButton,
   measurePlayerNameButton,
+  measureSoundButton,
   type ButtonRect,
 } from '../graphics/ui-text';
+import { loadImage } from '../lib/load-image';
 import { getCanvasPoint, isPointInRect, type PressEvent } from '../input/pointer';
 import {
   getPersonalBest,
@@ -57,7 +67,12 @@ import {
   getDifficultyById,
   type DifficultyLevel,
 } from './difficulty';
+import { getMedal } from './medals';
 import { GAME_STATES, type GameState } from './states';
+
+export const RESIZE_DEBOUNCE_MS = 100;
+const COUNTDOWN_STEP_DURATION = 45;
+const COUNTDOWN_STEPS = 4;
 
 const GOOSE_URL = `${import.meta.env.BASE_URL}static/goose.png`;
 const SPLASH_URL = `${import.meta.env.BASE_URL}static/petya-splash.png`;
@@ -67,16 +82,6 @@ const RETRY_BUTTON_LABEL = 'Ещё раз';
 const PLAY_BUTTON_LABEL = 'Играть';
 const RECORDS_BUTTON_LABEL = 'Рекорды';
 const BACK_BUTTON_LABEL = 'Назад';
-const RESIZE_DEBOUNCE_MS = 100;
-
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.addEventListener('load', () => resolve(img));
-    img.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)));
-    img.src = src;
-  });
-}
 
 export class Game {
   private canvas!: HTMLCanvasElement;
@@ -91,6 +96,8 @@ export class Game {
   private readonly goose = new Goose();
   private readonly pipes = new Pipes();
   private readonly nameInput = new NameInputOverlay();
+  private readonly sound = getSoundManager();
+  private readonly haptic = getHapticManager();
 
   private currentState: GameState = GAME_STATES.Splash;
   private fgpos = 0;
@@ -107,7 +114,12 @@ export class Game {
   private recordsLevelTab: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
   private difficultyTabBtns: ButtonRect[] = [];
   private playBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private soundBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  private pauseBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   private selectedDifficulty: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
+  private countdownStep = -1;
+  private countdownTimer = 0;
+  private isNewBest = false;
   private fgScrollSpeed = getDifficultyById(DIFFICULTY_LEVELS.Medium).fgScrollSpeed;
   private hasSavedCurrentScore = false;
   private lastFrameTime = 0;
@@ -212,6 +224,19 @@ export class Game {
       width: playBtnSize.width,
       height: playBtnSize.height,
     };
+
+    const soundBtnSize = measureSoundButton();
+    this.soundBtn = {
+      x: logicalWidth - soundBtnSize.width - 16,
+      y: splashLayout.soundButtonY,
+      width: soundBtnSize.width,
+      height: soundBtnSize.height,
+    };
+
+    this.pauseBtn = getPauseButtonRect(
+      logicalWidth,
+      getScoreBadgeY(logicalHeight),
+    );
   }
 
   private bindInput(): void {
@@ -316,6 +341,11 @@ export class Game {
           break;
         }
 
+        if (isPointInRect(point, this.soundBtn)) {
+          this.sound.toggleMuted();
+          break;
+        }
+
         if (isPointInRect(point, this.playBtn)) {
           void this.startGameWithNamePrompt();
           break;
@@ -353,8 +383,25 @@ export class Game {
         break;
       }
 
-      case GAME_STATES.Game:
+      case GAME_STATES.Countdown:
+        break;
+
+      case GAME_STATES.Game: {
+        const point = getCanvasPoint(this.canvas, evt, this.viewport);
+
+        if (point && isPointInRect(point, this.pauseBtn)) {
+          this.currentState = GAME_STATES.Paused;
+          break;
+        }
+
         this.goose.jump();
+        this.sound.play(SOUND_EVENTS.Jump);
+        this.haptic.pulse(HAPTIC_EVENTS.Jump);
+        break;
+      }
+
+      case GAME_STATES.Paused:
+        this.currentState = GAME_STATES.Game;
         break;
 
       case GAME_STATES.Score: {
@@ -420,11 +467,22 @@ export class Game {
     this.personalBest = getPersonalBest(this.playerName, this.selectedDifficulty);
     this.score = 0;
     this.hasSavedCurrentScore = false;
+    this.isNewBest = false;
     this.layoutUi();
-    this.currentState = GAME_STATES.Game;
+    this.currentState = GAME_STATES.Countdown;
+    this.countdownStep = 0;
+    this.countdownTimer = 0;
     this.pipes.reset();
     this.pipes.seedInitial(this.viewport.logicalWidth, this.viewport.logicalHeight);
+  }
+
+  private startActiveGame(): void {
+    this.currentState = GAME_STATES.Game;
+    this.countdownStep = -1;
+    this.countdownTimer = 0;
     this.goose.jump();
+    this.sound.play(SOUND_EVENTS.Jump);
+    this.haptic.pulse(HAPTIC_EVENTS.Jump);
   }
 
   private run(): void {
@@ -448,13 +506,34 @@ export class Game {
     const { logicalHeight } = this.viewport;
     this.frames += dt;
 
-    if (this.currentState !== GAME_STATES.Score) {
+    if (
+      this.currentState !== GAME_STATES.Score
+      && this.currentState !== GAME_STATES.Paused
+    ) {
       this.fgpos =
         (this.fgpos - this.fgScrollSpeed * dt) % FG_TILE_WIDTH;
     } else if (!this.hasSavedCurrentScore) {
+      this.isNewBest = this.score > this.personalBest;
       saveRecord(this.playerName, this.selectedDifficulty, this.score);
+      if (this.isNewBest) {
+        this.sound.play(SOUND_EVENTS.NewBest);
+      }
       this.personalBest = Math.max(this.personalBest, this.score);
       this.hasSavedCurrentScore = true;
+    }
+
+    if (this.currentState === GAME_STATES.Countdown) {
+      this.countdownTimer += dt;
+
+      if (this.countdownTimer >= COUNTDOWN_STEP_DURATION) {
+        this.countdownTimer = 0;
+        this.countdownStep += 1;
+        this.sound.play(SOUND_EVENTS.Tick);
+
+        if (this.countdownStep >= COUNTDOWN_STEPS) {
+          this.startActiveGame();
+        }
+      }
     }
 
     if (this.currentState === GAME_STATES.Game) {
@@ -465,9 +544,13 @@ export class Game {
         dt,
         () => {
           this.currentState = GAME_STATES.Score;
+          this.sound.play(SOUND_EVENTS.Hit);
+          this.haptic.pulse(HAPTIC_EVENTS.Hit);
         },
         () => {
           this.score++;
+          this.sound.play(SOUND_EVENTS.Score);
+          this.haptic.pulse(HAPTIC_EVENTS.Score);
         },
       );
     }
@@ -481,6 +564,8 @@ export class Game {
       () => {
         if (this.currentState === GAME_STATES.Game) {
           this.currentState = GAME_STATES.Score;
+          this.sound.play(SOUND_EVENTS.Hit);
+          this.haptic.pulse(HAPTIC_EVENTS.Hit);
         }
       },
     );
@@ -528,10 +613,20 @@ export class Game {
 
       drawButton(ctx, PLAY_BUTTON_LABEL, this.playBtn, true);
       drawButton(ctx, RECORDS_BUTTON_LABEL, this.recordsBtn);
+      drawSoundButton(ctx, this.soundBtn, this.sound.isMuted());
 
       if (this.playerName) {
         drawPlayerNameButton(ctx, this.playerName, this.playerNameBtn);
       }
+    }
+
+    if (this.currentState === GAME_STATES.Countdown) {
+      drawCountdown(
+        ctx,
+        centerX,
+        getCountdownY(logicalHeight),
+        this.countdownStep,
+      );
     }
 
     if (this.currentState === GAME_STATES.Records) {
@@ -559,7 +654,12 @@ export class Game {
     }
 
     if (this.currentState === GAME_STATES.Score) {
-      drawSubtitle(ctx, 'Игра окончена', centerX, scoreLayout.subtitleY);
+      drawSubtitle(
+        ctx,
+        this.isNewBest ? 'Новый рекорд!' : 'Игра окончена',
+        centerX,
+        scoreLayout.subtitleY,
+      );
       drawGameOverImage(
         ctx,
         this.gameOverImg,
@@ -573,10 +673,17 @@ export class Game {
         this.personalBest,
         centerX,
         scoreLayout.panelY,
+        { medal: getMedal(this.score) },
       );
       drawButton(ctx, RETRY_BUTTON_LABEL, this.okBtn);
     } else if (this.currentState === GAME_STATES.Game) {
+      const badgeY = getScoreBadgeY(logicalHeight);
+      drawScoreBadge(ctx, this.score, centerX, badgeY);
+      drawPauseButton(ctx, this.pauseBtn);
+    } else if (this.currentState === GAME_STATES.Paused) {
       drawScoreBadge(ctx, this.score, centerX, getScoreBadgeY(logicalHeight));
+      drawPauseButton(ctx, this.pauseBtn);
+      drawPauseOverlay(ctx, logicalWidth, logicalHeight, centerX, logicalHeight * 0.5);
     }
   }
 }

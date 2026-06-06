@@ -49,13 +49,24 @@ npm run cap:open:android
 
 `build:android` использует `base: './'` — это нужно для локальных ассетов внутри APK.
 
+## Игровые возможности
+
+- 3 уровня сложности (легкий / средний / сложный)
+- Локальные рекорды и опциональный Firebase-лидерборд (топ-10)
+- Countdown 3-2-1 перед стартом раунда
+- Звуковые эффекты с кнопкой mute на splash
+- Haptic feedback на мобильных (прыжок, очко, столкновение)
+- Пауза во время игры (кнопка II)
+- Медали на экране счёта: бронза (10+), серебро (25+), золото (50+)
+- Подсветка «Новый рекорд!» при побитии личного best
+
 ## Качество кода
 
 ```bash
-npm run check       # lint + test:run (как в pre-commit)
+npm run check          # lint + test:run (как в pre-commit)
 npm run lint -w flappy-petya-web
 npm run test:run -w flappy-petya-web
-npm run test:coverage -w flappy-petya-web
+npm run test:coverage -w flappy-petya-web   # с порогами покрытия (CI)
 ```
 
 ### Pre-commit (Husky)
@@ -67,8 +78,8 @@ npm run test:coverage -w flappy-petya-web
 
 | Workflow | Триггер | Назначение |
 |----------|---------|------------|
-| [ci.yml](.github/workflows/ci.yml) | push / PR в `main` | `npm ci` + lint + test + build |
-| [deploy-pages.yml](.github/workflows/deploy-pages.yml) | push в `main` | lint + test + сборка и деплой на GitHub Pages |
+| [ci.yml](.github/workflows/ci.yml) | push / PR в `main` | `npm ci` + lint + test:coverage + build |
+| [deploy-pages.yml](.github/workflows/deploy-pages.yml) | push в `main` | lint + test:coverage + сборка и деплой на GitHub Pages |
 
 **Настройка Pages (один раз):** **Settings → Pages → Build and deployment**
 
@@ -86,7 +97,8 @@ web/src/
   game/       — игровой цикл и FSM
   entities/   — птица и трубы
   graphics/   — спрайты и отрисовка
-  input/      — координаты указателя (mouse + touch)
+  input/      — pointer, haptic feedback
+  audio/      — звуковые эффекты (Web Audio)
   lib/        — Firebase, storage, viewport
   ui/         — лоадер, ввод имени
 web/public/static/
