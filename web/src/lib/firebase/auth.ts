@@ -18,10 +18,15 @@ function ensureAuthReadyPromise(): Promise<void> {
   }
 
   authReadyPromise = new Promise((resolve) => {
-    const unsubscribe = onAuthStateChanged(getAuth(), (user) => {
+    let isFirstAuthState = true;
+
+    onAuthStateChanged(getAuth(), (user) => {
       currentUser = user;
-      unsubscribe();
-      resolve();
+
+      if (isFirstAuthState) {
+        isFirstAuthState = false;
+        resolve();
+      }
     });
   });
 

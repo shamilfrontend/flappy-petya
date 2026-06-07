@@ -371,4 +371,27 @@ describe('storage index (firebase mode)', () => {
     ).toBeUndefined();
     expect(recordsStoreMocks.upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
+
+  it('signs out when firestore profile access is denied', async () => {
+    const permissionError = {
+      code: 'permission-denied',
+      message: 'Missing or insufficient permissions.',
+    };
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    authMocks.signOutUser.mockImplementation(async () => {
+      authMocks.isUserAuthenticated.mockReturnValue(false);
+    });
+    playerStoreMocks.fetchPlayerProfile.mockRejectedValue(permissionError);
+    const { initStorage, isUserSignedIn } = await loadStorageModule();
+
+    await initStorage();
+
+    expect(authMocks.signOutUser).toHaveBeenCalled();
+    expect(isUserSignedIn()).toBe(false);
+    expect(consoleWarn).toHaveBeenCalledWith(
+      expect.stringContaining('Firestore access denied'),
+      permissionError,
+    );
+    consoleWarn.mockRestore();
+  });
 });

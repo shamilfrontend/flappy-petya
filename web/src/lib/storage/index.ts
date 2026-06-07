@@ -14,6 +14,7 @@ import {
   signOutUser,
   waitForAuthReady,
 } from '../firebase/auth';
+import { isFirestorePermissionError } from '../firebase/errors';
 import {
   clearLeaderboardCache,
   getCacheLeaderboard,
@@ -129,6 +130,14 @@ async function loadAllLeaderboards(): Promise<void> {
   }
 }
 
+async function clearStaleAuthSession(): Promise<void> {
+  pendingTasks.length = 0;
+  isProcessingQueue = false;
+  currentUid = null;
+  resetStorageCache();
+  await signOutUser();
+}
+
 async function loadStorageForUser(uid: string): Promise<void> {
   currentUid = uid;
 
@@ -137,21 +146,34 @@ async function loadStorageForUser(uid: string): Promise<void> {
     return;
   }
 
-  const googleName = getAuthDisplayName();
-  let profile = await fetchPlayerProfile(db, uid);
+  try {
+    const googleName = getAuthDisplayName();
+    let profile = await fetchPlayerProfile(db, uid);
 
-  if (!profile?.name) {
-    profile = await migrateLocalDataToFirestore(db, uid, googleName);
-  } else if (!profile.name.trim() && googleName) {
-    profile = { ...profile, name: googleName };
-    await savePlayerProfile(db, uid, profile);
-  } else {
-    await syncProfileBestsToLeaderboard(uid, profile);
+    if (!profile?.name) {
+      profile = await migrateLocalDataToFirestore(db, uid, googleName);
+    } else if (!profile.name.trim() && googleName) {
+      profile = { ...profile, name: googleName };
+      await savePlayerProfile(db, uid, profile);
+    } else {
+      await syncProfileBestsToLeaderboard(uid, profile);
+    }
+
+    setCacheProfile(profile);
+    await loadAllLeaderboards();
+    void processQueue();
+  } catch (error) {
+    if (isFirestorePermissionError(error)) {
+      console.warn(
+        'Firestore access denied — сессия сброшена. Проверьте деплой firestore.rules и вход через Google.',
+        error,
+      );
+      await clearStaleAuthSession();
+      return;
+    }
+
+    throw error;
   }
-
-  setCacheProfile(profile);
-  await loadAllLeaderboards();
-  void processQueue();
 }
 
 export async function initStorage(): Promise<void> {

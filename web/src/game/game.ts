@@ -209,26 +209,35 @@ export class Game {
     this.recordsBtn = recordsBtn;
     this.settingsBtn = settingsBtn;
 
-    if (this.playerName && isUserSignedIn()) {
-      const playerNameBtnSize = measurePlayerNameButton(
-        this.ctx,
-        this.playerName,
-        logicalWidth,
-      );
+    if (isUserSignedIn()) {
       const signOutBtnSize = measureButton(this.ctx, SIGN_OUT_LABEL);
-      this.playerNameBtn = {
-        x: (logicalWidth - playerNameBtnSize.width) / 2,
-        y: this.recordsBtn.y + this.recordsBtn.height + FOOTER_BUTTON_GAP,
-        width: playerNameBtnSize.width,
-        height: playerNameBtnSize.height,
-      };
+      let signOutY = this.recordsBtn.y + this.recordsBtn.height + FOOTER_BUTTON_GAP;
+
+      if (this.playerName) {
+        const playerNameBtnSize = measurePlayerNameButton(
+          this.ctx,
+          this.playerName,
+          logicalWidth,
+        );
+        this.playerNameBtn = {
+          x: (logicalWidth - playerNameBtnSize.width) / 2,
+          y: signOutY,
+          width: playerNameBtnSize.width,
+          height: playerNameBtnSize.height,
+        };
+        signOutY = this.playerNameBtn.y + this.playerNameBtn.height + FOOTER_BUTTON_GAP;
+      } else {
+        this.playerNameBtn = { x: 0, y: 0, width: 0, height: 0 };
+      }
+
       this.signOutBtn = {
         x: (logicalWidth - signOutBtnSize.width) / 2,
-        y: this.playerNameBtn.y + this.playerNameBtn.height + FOOTER_BUTTON_GAP,
+        y: signOutY,
         width: signOutBtnSize.width,
         height: signOutBtnSize.height,
       };
     } else {
+      this.playerNameBtn = { x: 0, y: 0, width: 0, height: 0 };
       this.signOutBtn = { x: 0, y: 0, width: 0, height: 0 };
     }
 
@@ -767,8 +776,10 @@ export class Game {
       drawRecordsTab(ctx, RECORDS_BUTTON_LABEL, this.recordsBtn, false);
       drawRecordsTab(ctx, SETTINGS_BUTTON_LABEL, this.settingsBtn, false);
 
-      if (this.playerName && isUserSignedIn()) {
-        drawPlayerNameButton(ctx, this.playerName, this.playerNameBtn);
+      if (isUserSignedIn()) {
+        if (this.playerName) {
+          drawPlayerNameButton(ctx, this.playerName, this.playerNameBtn);
+        }
         drawRecordsTab(ctx, SIGN_OUT_LABEL, this.signOutBtn, false);
       }
     }
