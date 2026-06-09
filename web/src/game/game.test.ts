@@ -381,6 +381,8 @@ describe('Game', () => {
   });
 
   it('shows message overlay when asset loading fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
     vi.stubGlobal('Image', function FailingImage(this: {
       listeners: Map<string, Array<() => void>>;
       source: string;
@@ -420,6 +422,11 @@ describe('Game', () => {
 
     game.destroy();
     expect(document.querySelector('canvas')).toBeNull();
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('Failed to load') }),
+    );
+
+    consoleError.mockRestore();
   });
 
   it('shows message overlay when canvas context is unavailable', () => {
