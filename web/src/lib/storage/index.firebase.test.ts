@@ -38,7 +38,13 @@ const sessionState = vi.hoisted(() => ({
 const sessionStoreMocks = vi.hoisted(() => ({
   startGameSession: vi.fn(() => Promise.resolve()),
   completeGameSession: vi.fn(() => Promise.resolve()),
-  getCachedActiveSession: vi.fn(() => ({
+  getCachedActiveSession: vi.fn<
+    () => {
+      level: 'easy' | 'medium' | 'hard';
+      status: 'active';
+      startedAtMs: number;
+    } | null
+  >(() => ({
     level: sessionState.level,
     status: 'active' as const,
     startedAtMs: Date.now() - 10_000_000,

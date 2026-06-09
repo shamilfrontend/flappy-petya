@@ -11,7 +11,6 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc,
-  getFirestore,
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore';
@@ -52,11 +51,9 @@ function authedDb(uid = 'user-1') {
     throw new Error('Rules test environment is not initialized');
   }
 
-  return getFirestore(
-    testEnv.authenticatedContext(uid, {
-      firebase: { sign_in_provider: 'anonymous' },
-    }).firestore(),
-  );
+  return testEnv.authenticatedContext(uid, {
+    firebase: { sign_in_provider: 'anonymous' },
+  }).firestore();
 }
 
 async function startSession(

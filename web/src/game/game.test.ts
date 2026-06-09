@@ -137,6 +137,7 @@ import { Game } from './game';
 import { renderGame } from './game-renderer';
 import { updateGame } from './game-updater';
 import { handleScreenPress } from './screen-handlers';
+import type { MessageOverlay } from '../ui/message-overlay';
 import { GAME_STATES } from './states';
 
 interface GamePrivate {
@@ -164,6 +165,8 @@ interface GamePrivate {
   hapticToggleBtn: { x: number; y: number; width: number; height: number };
   pauseBtn: { x: number; y: number; width: number; height: number };
   fgpos: number;
+  messageOverlay: MessageOverlay;
+  gameFrames: number;
 }
 
 function accessGame(game: Game): GamePrivate {
