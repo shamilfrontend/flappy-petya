@@ -135,11 +135,18 @@ export class Game implements GameHost {
     this.gameLoop.bindResizeTracking();
     this.gameLoop.bindVisibilityTracking();
 
+    void initStorage()
+      .then(() => {
+        this.syncStateFromStorage();
+      })
+      .catch((err) => {
+        console.error('Storage initialization failed', err);
+      });
+
     Promise.all([
       loadImageWithFallback(GOOSE_URL),
       loadImageWithFallback(GAME_OVER_URL),
       loadImageWithFallback(LOGO_URL),
-      initStorage(),
     ])
       .then(([gooseImg, gameOverImg, logoImg]) => {
         this.sprites = initSprites(gooseImg);

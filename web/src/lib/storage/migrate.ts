@@ -77,6 +77,10 @@ export async function migrateLocalDataToFirestore(
     trimmedName ? collectLegacyBests(trimmedName) : createEmptyBests(),
   );
 
+  if (!trimmedName) {
+    return profile;
+  }
+
   await savePlayerProfile(db, uid, profile);
 
   return profile;

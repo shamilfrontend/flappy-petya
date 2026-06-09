@@ -93,7 +93,7 @@ describe('migrateLocalDataToFirestore', () => {
     });
   });
 
-  it('saves empty profile when local player name is missing', async () => {
+  it('returns empty profile without saving when local player name is missing', async () => {
     fetchPlayerProfile.mockResolvedValue(null);
 
     await expect(
@@ -102,6 +102,8 @@ describe('migrateLocalDataToFirestore', () => {
       name: '',
       bests: { easy: 0, medium: 0, hard: 0 },
     });
+
+    expect(savePlayerProfile).not.toHaveBeenCalled();
   });
 
   it('does not include other players in migrated bests', async () => {

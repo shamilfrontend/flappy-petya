@@ -71,6 +71,7 @@ let isProcessingQueue = false;
 let currentUid: string | null = null;
 let queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let queueRetryAttempt = 0;
+let isRecoveringAuthSession = false;
 const ONLINE_HANDLER_KEY = '__flappyPetyaStorageOnlineHandler';
 
 function resetStorageCache(): void {
@@ -209,19 +210,28 @@ async function loadAllLeaderboards(): Promise<void> {
 }
 
 async function clearStaleAuthSession(): Promise<void> {
-  clearQueueState();
-  clearCachedSession();
-  currentUid = null;
-  resetStorageCache();
-  await signOutUser();
+  if (isRecoveringAuthSession) {
+    console.warn('Auth session recovery already in progress, skipping retry');
+    return;
+  }
+
+  isRecoveringAuthSession = true;
 
   try {
+    clearQueueState();
+    clearCachedSession();
+    currentUid = null;
+    resetStorageCache();
+    await signOutUser();
+
     const user = await signInAnonymouslyUser();
     if (user?.uid) {
       await loadStorageForUser(user.uid);
     }
   } catch (error) {
     console.error('Failed to restore anonymous session', error);
+  } finally {
+    isRecoveringAuthSession = false;
   }
 }
 

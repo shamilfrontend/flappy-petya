@@ -573,4 +573,28 @@ describe('storage index (firebase mode)', () => {
     );
     consoleWarn.mockRestore();
   });
+
+  it('does not loop auth recovery when firestore access stays denied', async () => {
+    const permissionError = {
+      code: 'permission-denied',
+      message: 'Missing or insufficient permissions.',
+    };
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    authMocks.signOutUser.mockResolvedValue(undefined);
+    authMocks.signInAnonymouslyUser.mockResolvedValue({ uid: 'uid-2' });
+    playerStoreMocks.fetchPlayerProfile.mockRejectedValue(permissionError);
+    migrateMocks.migrateLocalDataToFirestore.mockResolvedValue(
+      createDefaultProfile(),
+    );
+    const { initStorage } = await loadStorageModule();
+
+    await initStorage();
+
+    expect(authMocks.signOutUser).toHaveBeenCalledTimes(1);
+    expect(authMocks.signInAnonymouslyUser).toHaveBeenCalledTimes(1);
+    expect(consoleWarn).toHaveBeenCalledWith(
+      'Auth session recovery already in progress, skipping retry',
+    );
+    consoleWarn.mockRestore();
+  });
 });
