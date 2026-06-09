@@ -1,13 +1,14 @@
 import type { Firestore } from 'firebase/firestore';
 import type { DifficultyLevel } from '../../game/difficulty';
+import { getLocalPlayerName } from './local';
 import {
   buildProfileFromLocal,
   fetchPlayerProfile,
   savePlayerProfile,
 } from './player-store';
-import { upsertLeaderboardEntry } from './records-store';
 import {
   createEmptyBests,
+  MAX_VALID_SCORE,
   type GameRecord,
   type PlayerProfile,
 } from './types';
@@ -25,6 +26,7 @@ function isGameRecord(value: unknown): value is GameRecord {
     && typeof record.level === 'string'
     && typeof record.score === 'number'
     && record.score >= 0
+    && record.score <= MAX_VALID_SCORE
   );
 }
 
@@ -53,7 +55,8 @@ function collectLegacyBests(name: string): Record<DifficultyLevel, number> {
   getLegacyLocalRecords()
     .filter((record) => record.name === trimmedName)
     .forEach((record) => {
-      bests[record.level] = Math.max(bests[record.level], record.score);
+      const cappedScore = Math.min(record.score, MAX_VALID_SCORE);
+      bests[record.level] = Math.max(bests[record.level], cappedScore);
     });
 
   return bests;
@@ -62,40 +65,19 @@ function collectLegacyBests(name: string): Record<DifficultyLevel, number> {
 export async function migrateLocalDataToFirestore(
   db: Firestore,
   uid: string,
-  displayName: string,
 ): Promise<PlayerProfile> {
   const existingProfile = await fetchPlayerProfile(db, uid);
   if (existingProfile?.name) {
     return existingProfile;
   }
 
-  const trimmedName = displayName.trim();
+  const trimmedName = getLocalPlayerName();
   const profile = buildProfileFromLocal(
     trimmedName,
     trimmedName ? collectLegacyBests(trimmedName) : createEmptyBests(),
   );
 
   await savePlayerProfile(db, uid, profile);
-
-  if (!trimmedName) {
-    return profile;
-  }
-
-  const legacyRecords = getLegacyLocalRecords().filter(
-    (record) => record.name === trimmedName,
-  );
-
-  await Promise.all(
-    legacyRecords.map((record) =>
-      upsertLeaderboardEntry(
-        db,
-        uid,
-        record.level,
-        trimmedName,
-        record.score,
-      ),
-    ),
-  );
 
   return profile;
 }

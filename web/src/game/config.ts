@@ -32,3 +32,7 @@ export const SPLASH_GOOSE_HOVER_AMPLITUDE = 5;
 export const DEATH_ANIM_DURATION = 20;
 export const SHAKE_DURATION = 12;
 export const SHAKE_INTENSITY = 4;
+
+export const RESIZE_DEBOUNCE_MS = 100;
+export const COUNTDOWN_STEP_DURATION = 45;
+export const COUNTDOWN_STEPS = 4;

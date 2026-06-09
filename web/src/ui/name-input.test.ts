@@ -1,3 +1,4 @@
+import { MAX_PLAYER_NAME_LENGTH } from '../lib/storage/types';
 import { NameInputOverlay } from './name-input';
 
 describe('NameInputOverlay', () => {
@@ -10,6 +11,7 @@ describe('NameInputOverlay', () => {
       overlay: document.querySelector('.name-overlay') as HTMLDivElement,
       input: document.querySelector('.name-dialog__input') as HTMLInputElement,
       button: document.querySelector('.name-dialog__button') as HTMLButtonElement,
+      error: document.querySelector('.name-dialog__error') as HTMLParagraphElement,
     };
   }
 
@@ -32,18 +34,16 @@ describe('NameInputOverlay', () => {
     expect(root.hidden).toBe(true);
   });
 
-  it('uses default name when input is blank', async () => {
+  it('keeps overlay open when input is blank', async () => {
     const overlay = new NameInputOverlay();
-    const { input, button } = getElements();
+    const { overlay: root, input, button, error } = getElements();
 
-    const resultPromise = overlay.prompt('');
+    overlay.prompt('');
     input.value = '   ';
     button.click();
 
-    await expect(resultPromise).resolves.toEqual({
-      name: 'Игрок',
-      confirmed: true,
-    });
+    expect(root.hidden).toBe(false);
+    expect(error.hidden).toBe(false);
   });
 
   it('applies custom submit label', () => {
@@ -67,6 +67,14 @@ describe('NameInputOverlay', () => {
       name: 'Bob',
       confirmed: true,
     });
+  });
+
+  it('limits input length to MAX_PLAYER_NAME_LENGTH', () => {
+    const overlay = new NameInputOverlay();
+    const { input } = getElements();
+
+    expect(input.maxLength).toBe(MAX_PLAYER_NAME_LENGTH);
+    overlay.hide();
   });
 
   it('hide closes overlay without resolving pending prompt', () => {

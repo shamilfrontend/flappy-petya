@@ -128,7 +128,6 @@ describe('Goose', () => {
     const drawSpy = vi.spyOn(frame, 'draw');
     const sprites = {
       goose: [frame, frame, frame],
-      petyaSplash: new Sprite(img, 0, 0, 110, 200),
     };
     const ctx = {
       save: vi.fn(),

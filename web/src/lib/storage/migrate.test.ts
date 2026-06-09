@@ -6,10 +6,6 @@ const {
   savePlayerProfile: vi.fn(),
 }));
 
-const { upsertLeaderboardEntry } = vi.hoisted(() => ({
-  upsertLeaderboardEntry: vi.fn(),
-}));
-
 vi.mock('./player-store', () => ({
   buildProfileFromLocal: (
     name: string,
@@ -24,10 +20,6 @@ vi.mock('./player-store', () => ({
   savePlayerProfile,
 }));
 
-vi.mock('./records-store', () => ({
-  upsertLeaderboardEntry,
-}));
-
 import { migrateLocalDataToFirestore } from './migrate';
 
 describe('migrateLocalDataToFirestore', () => {
@@ -38,7 +30,6 @@ describe('migrateLocalDataToFirestore', () => {
     localStorage.clear();
     vi.clearAllMocks();
     savePlayerProfile.mockResolvedValue(undefined);
-    upsertLeaderboardEntry.mockResolvedValue(undefined);
   });
 
   it('returns existing profile when firestore already has a name', async () => {
@@ -49,15 +40,15 @@ describe('migrateLocalDataToFirestore', () => {
     fetchPlayerProfile.mockResolvedValue(existingProfile);
 
     await expect(
-      migrateLocalDataToFirestore(db, uid, 'Петя'),
+      migrateLocalDataToFirestore(db, uid),
     ).resolves.toBe(existingProfile);
 
     expect(savePlayerProfile).not.toHaveBeenCalled();
-    expect(upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
 
-  it('migrates google display name and legacy bests to firestore', async () => {
+  it('migrates local player name and legacy bests to profile only', async () => {
     fetchPlayerProfile.mockResolvedValue(null);
+    localStorage.setItem('flappy-petya-player-name', 'Петя');
     localStorage.setItem(
       'flappy-petya-records',
       JSON.stringify([
@@ -67,7 +58,7 @@ describe('migrateLocalDataToFirestore', () => {
     );
 
     await expect(
-      migrateLocalDataToFirestore(db, uid, 'Петя'),
+      migrateLocalDataToFirestore(db, uid),
     ).resolves.toEqual({
       name: 'Петя',
       bests: { easy: 12, medium: 0, hard: 7 },
@@ -81,24 +72,41 @@ describe('migrateLocalDataToFirestore', () => {
         bests: { easy: 12, medium: 0, hard: 7 },
       },
     );
-    expect(upsertLeaderboardEntry).toHaveBeenCalledTimes(2);
   });
 
-  it('saves empty profile when google display name is missing', async () => {
+  it('ignores legacy records above MAX_VALID_SCORE', async () => {
+    fetchPlayerProfile.mockResolvedValue(null);
+    localStorage.setItem('flappy-petya-player-name', 'Петя');
+    localStorage.setItem(
+      'flappy-petya-records',
+      JSON.stringify([
+        { name: 'Петя', level: 'hard', score: 9999 },
+        { name: 'Петя', level: 'easy', score: 10000 },
+      ]),
+    );
+
+    await expect(
+      migrateLocalDataToFirestore(db, uid),
+    ).resolves.toEqual({
+      name: 'Петя',
+      bests: { easy: 0, medium: 0, hard: 9999 },
+    });
+  });
+
+  it('saves empty profile when local player name is missing', async () => {
     fetchPlayerProfile.mockResolvedValue(null);
 
     await expect(
-      migrateLocalDataToFirestore(db, uid, ''),
+      migrateLocalDataToFirestore(db, uid),
     ).resolves.toEqual({
       name: '',
       bests: { easy: 0, medium: 0, hard: 0 },
     });
-
-    expect(upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
 
-  it('does not upload leaderboard entries for other players', async () => {
+  it('does not include other players in migrated bests', async () => {
     fetchPlayerProfile.mockResolvedValue(null);
+    localStorage.setItem('flappy-petya-player-name', 'Петя');
     localStorage.setItem(
       'flappy-petya-records',
       JSON.stringify([
@@ -107,15 +115,15 @@ describe('migrateLocalDataToFirestore', () => {
       ]),
     );
 
-    await migrateLocalDataToFirestore(db, uid, 'Петя');
+    await migrateLocalDataToFirestore(db, uid);
 
-    expect(upsertLeaderboardEntry).toHaveBeenCalledOnce();
-    expect(upsertLeaderboardEntry).toHaveBeenCalledWith(
+    expect(savePlayerProfile).toHaveBeenCalledWith(
       db,
       uid,
-      'easy',
-      'Петя',
-      5,
+      {
+        name: 'Петя',
+        bests: { easy: 5, medium: 0, hard: 0 },
+      },
     );
   });
 });

@@ -8,9 +8,7 @@ const authMocks = vi.hoisted(() => ({
   initAuth: vi.fn(),
   waitForAuthReady: vi.fn(() => Promise.resolve()),
   getCurrentUid: vi.fn(() => 'uid-1'),
-  getAuthDisplayName: vi.fn(() => 'Петя'),
-  isUserAuthenticated: vi.fn(() => true),
-  signInWithGoogle: vi.fn(),
+  signInAnonymouslyUser: vi.fn(),
   signOutUser: vi.fn(() => Promise.resolve()),
 }));
 
@@ -33,11 +31,39 @@ const migrateMocks = vi.hoisted(() => ({
   migrateLocalDataToFirestore: vi.fn(),
 }));
 
+const sessionState = vi.hoisted(() => ({
+  level: 'easy' as 'easy' | 'medium' | 'hard',
+}));
+
+const sessionStoreMocks = vi.hoisted(() => ({
+  startGameSession: vi.fn(() => Promise.resolve()),
+  completeGameSession: vi.fn(() => Promise.resolve()),
+  getCachedActiveSession: vi.fn(() => ({
+    level: sessionState.level,
+    status: 'active' as const,
+    startedAtMs: Date.now() - 10_000_000,
+  })),
+  clearCachedSession: vi.fn(),
+}));
+
 vi.mock('../firebase/app', () => firebaseMocks);
 vi.mock('../firebase/auth', () => authMocks);
 vi.mock('./player-store', () => playerStoreMocks);
 vi.mock('./records-store', () => recordsStoreMocks);
 vi.mock('./migrate', () => migrateMocks);
+vi.mock('./session-store', () => sessionStoreMocks);
+
+function validGameFrames(score: number): number {
+  if (score <= 0) {
+    return 0;
+  }
+
+  if (score === 1) {
+    return 250;
+  }
+
+  return 250 + (score - 1) * 120;
+}
 
 import {
   setCacheProfile,
@@ -64,11 +90,11 @@ describe('storage index (firebase mode)', () => {
     localStorage.clear();
     resetStorageCache();
     vi.clearAllMocks();
+    sessionState.level = 'easy';
     firebaseMocks.isFirebaseEnabled.mockReturnValue(true);
     firebaseMocks.getFirestoreDb.mockReturnValue(db);
     authMocks.getCurrentUid.mockReturnValue('uid-1');
-    authMocks.getAuthDisplayName.mockReturnValue('Петя');
-    authMocks.isUserAuthenticated.mockReturnValue(true);
+    authMocks.signInAnonymouslyUser.mockResolvedValue({ uid: 'uid-1' });
     playerStoreMocks.fetchPlayerProfile.mockResolvedValue(null);
     playerStoreMocks.updatePlayerName.mockImplementation(
       async (_db, _uid, name: string, currentProfile) => ({
@@ -112,11 +138,10 @@ describe('storage index (firebase mode)', () => {
     expect(migrateMocks.migrateLocalDataToFirestore).toHaveBeenCalledWith(
       db,
       'uid-1',
-      'Петя',
     );
   });
 
-  it('syncs existing profile bests to leaderboard', async () => {
+  it('does not sync existing profile bests to leaderboard on init', async () => {
     playerStoreMocks.fetchPlayerProfile.mockResolvedValue({
       name: 'Петя',
       bests: { easy: 5, medium: 0, hard: 3 },
@@ -126,7 +151,7 @@ describe('storage index (firebase mode)', () => {
     await initStorage();
 
     expect(migrateMocks.migrateLocalDataToFirestore).not.toHaveBeenCalled();
-    expect(recordsStoreMocks.upsertLeaderboardEntry).toHaveBeenCalledTimes(3);
+    expect(recordsStoreMocks.upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
 
   it('uses firebase profile bests as source of truth on init', async () => {
@@ -176,7 +201,8 @@ describe('storage index (firebase mode)', () => {
 
     await initStorage();
     savePlayerName('Петя');
-    saveRecord('Петя', 'medium', 15);
+    sessionState.level = 'medium';
+    saveRecord('Петя', 'medium', 15, validGameFrames(15));
 
     await vi.waitFor(() => {
       expect(recordsStoreMocks.upsertLeaderboardEntry).toHaveBeenCalledWith(
@@ -185,7 +211,12 @@ describe('storage index (firebase mode)', () => {
         'medium',
         'Петя',
         15,
+        validGameFrames(15),
       );
+    });
+
+    await vi.waitFor(() => {
+      expect(sessionStoreMocks.completeGameSession).toHaveBeenCalledWith(db, 'uid-1');
     });
 
     expect(playerStoreMocks.updatePlayerBest).toHaveBeenCalledWith(
@@ -223,7 +254,7 @@ describe('storage index (firebase mode)', () => {
 
     await initStorage();
     savePlayerName('Петя');
-    saveRecord('Петя', 'easy', 12);
+    saveRecord('Петя', 'easy', 12, validGameFrames(12));
 
     expect(recordsStoreMocks.fetchLeaderboard).not.toHaveBeenCalled();
     expect(getTopRecordsByLevel('easy')).toEqual([
@@ -237,7 +268,7 @@ describe('storage index (firebase mode)', () => {
 
     await initStorage();
     savePlayerName('Петя');
-    saveRecord('Петя', 'easy', 7);
+    saveRecord('Петя', 'easy', 7, validGameFrames(7));
 
     expect(getTopRecordsByLevel('easy')).toEqual(
       expect.arrayContaining([{ name: 'Петя', level: 'easy', score: 7 }]),
@@ -257,7 +288,8 @@ describe('storage index (firebase mode)', () => {
     await initStorage();
     setCacheLeaderboard('medium', remoteTop);
     savePlayerName('Петя');
-    saveRecord('Петя', 'medium', 3);
+    sessionState.level = 'medium';
+    saveRecord('Петя', 'medium', 3, validGameFrames(3));
 
     const records = getTopRecordsByLevel('medium');
 
@@ -275,13 +307,87 @@ describe('storage index (firebase mode)', () => {
 
     await initStorage();
     savePlayerName('Петя');
-    saveRecord('Петя', 'easy', 5);
+    saveRecord('Петя', 'easy', 5, validGameFrames(5));
 
     await vi.waitFor(() => {
       expect(consoleError).toHaveBeenCalledWith(
         'Firebase storage task failed',
         taskError,
       );
+    });
+
+    consoleError.mockRestore();
+  });
+
+  it('retries failed firebase task after backoff delay', async () => {
+    vi.useFakeTimers();
+    const taskError = new Error('network failed');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { initStorage, savePlayerName, saveRecord } = await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+
+    await vi.waitFor(() => {
+      expect(playerStoreMocks.updatePlayerName).toHaveBeenCalled();
+    });
+
+    recordsStoreMocks.upsertLeaderboardEntry.mockClear();
+    recordsStoreMocks.upsertLeaderboardEntry
+      .mockRejectedValueOnce(taskError)
+      .mockResolvedValue(undefined);
+    saveRecord('Петя', 'easy', 5, validGameFrames(5));
+
+    await vi.waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith(
+        'Firebase storage task failed',
+        taskError,
+      );
+    });
+
+    expect(recordsStoreMocks.upsertLeaderboardEntry).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(2000);
+
+    await vi.waitFor(() => {
+      expect(recordsStoreMocks.upsertLeaderboardEntry).toHaveBeenCalledTimes(2);
+    });
+
+    consoleError.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('retries firebase queue immediately when browser goes online', async () => {
+    const taskError = new Error('network failed');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { initStorage, savePlayerName, saveRecord } = await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+
+    await vi.waitFor(() => {
+      expect(playerStoreMocks.updatePlayerName).toHaveBeenCalled();
+    });
+
+    recordsStoreMocks.upsertLeaderboardEntry.mockClear();
+    recordsStoreMocks.upsertLeaderboardEntry
+      .mockRejectedValueOnce(taskError)
+      .mockResolvedValue(undefined);
+    saveRecord('Петя', 'easy', 5, validGameFrames(5));
+
+    await vi.waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith(
+        'Firebase storage task failed',
+        taskError,
+      );
+    });
+
+    expect(recordsStoreMocks.upsertLeaderboardEntry).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event('online'));
+
+    await vi.waitFor(() => {
+      expect(recordsStoreMocks.upsertLeaderboardEntry).toHaveBeenCalledTimes(2);
     });
 
     consoleError.mockRestore();
@@ -330,7 +436,7 @@ describe('storage index (firebase mode)', () => {
 
     await initStorage();
     savePlayerName('Петя');
-    saveRecord('Петя', 'easy', 5);
+    saveRecord('Петя', 'easy', 5, validGameFrames(5));
 
     await vi.waitFor(() => {
       expect(isFirebaseSyncPending()).toBe(true);
@@ -357,6 +463,69 @@ describe('storage index (firebase mode)', () => {
     );
   });
 
+  it('returns error when game session cannot start', async () => {
+    sessionStoreMocks.startGameSession.mockRejectedValueOnce({
+      code: 'permission-denied',
+      message: 'Missing or insufficient permissions.',
+    });
+    const { prepareGameSession } = await loadStorageModule();
+
+    await expect(prepareGameSession('easy')).resolves.toEqual({
+      ok: false,
+      errorMessage:
+        'Не удалось начать игровую сессию. Проверьте подключение и правила Firestore.',
+    });
+  });
+
+  it('returns error when firestore db is unavailable for session start', async () => {
+    firebaseMocks.getFirestoreDb.mockReturnValue(null as never);
+    const { prepareGameSession } = await loadStorageModule();
+
+    await expect(prepareGameSession('easy')).resolves.toEqual({
+      ok: false,
+      errorMessage: 'Не удалось подключиться к серверу рекордов.',
+    });
+  });
+
+  it('rejects saveRecord when wall clock is too short', async () => {
+    sessionStoreMocks.getCachedActiveSession.mockReturnValue({
+      level: 'easy',
+      status: 'active',
+      startedAtMs: Date.now(),
+    });
+    const { initStorage, savePlayerName, saveRecord } = await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+    recordsStoreMocks.upsertLeaderboardEntry.mockClear();
+    saveRecord('Петя', 'easy', 5, validGameFrames(5));
+
+    expect(recordsStoreMocks.upsertLeaderboardEntry).not.toHaveBeenCalled();
+  });
+
+  it('rejects saveRecord without active session', async () => {
+    sessionStoreMocks.getCachedActiveSession.mockReturnValue(null);
+    const { initStorage, savePlayerName, saveRecord } = await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+    recordsStoreMocks.upsertLeaderboardEntry.mockClear();
+    saveRecord('Петя', 'easy', 5, validGameFrames(5));
+
+    expect(recordsStoreMocks.upsertLeaderboardEntry).not.toHaveBeenCalled();
+  });
+
+  it('rejects saveRecord with invalid gameFrames', async () => {
+    const { initStorage, savePlayerName, saveRecord } = await loadStorageModule();
+
+    await initStorage();
+    savePlayerName('Петя');
+    recordsStoreMocks.upsertLeaderboardEntry.mockClear();
+    saveRecord('Петя', 'easy', 5, 1);
+
+    expect(recordsStoreMocks.upsertLeaderboardEntry).not.toHaveBeenCalled();
+  });
+
   it('rejects scores above MAX_VALID_SCORE', async () => {
     const { initStorage, savePlayerName, saveRecord, getTopRecordsByLevel } =
       await loadStorageModule();
@@ -364,7 +533,7 @@ describe('storage index (firebase mode)', () => {
     await initStorage();
     savePlayerName('Петя');
     recordsStoreMocks.upsertLeaderboardEntry.mockClear();
-    saveRecord('Петя', 'easy', 10000);
+    saveRecord('Петя', 'easy', 10000, validGameFrames(10000));
 
     expect(
       getTopRecordsByLevel('easy').find((record) => record.name === 'Петя'),
@@ -372,22 +541,26 @@ describe('storage index (firebase mode)', () => {
     expect(recordsStoreMocks.upsertLeaderboardEntry).not.toHaveBeenCalled();
   });
 
-  it('signs out when firestore profile access is denied', async () => {
+  it('restores anonymous session when firestore profile access is denied', async () => {
     const permissionError = {
       code: 'permission-denied',
       message: 'Missing or insufficient permissions.',
     };
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    authMocks.signOutUser.mockImplementation(async () => {
-      authMocks.isUserAuthenticated.mockReturnValue(false);
-    });
-    playerStoreMocks.fetchPlayerProfile.mockRejectedValue(permissionError);
-    const { initStorage, isUserSignedIn } = await loadStorageModule();
+    authMocks.signOutUser.mockResolvedValue(undefined);
+    authMocks.signInAnonymouslyUser.mockResolvedValue({ uid: 'uid-2' });
+    playerStoreMocks.fetchPlayerProfile
+      .mockRejectedValueOnce(permissionError)
+      .mockResolvedValue(null);
+    migrateMocks.migrateLocalDataToFirestore.mockResolvedValue(
+      createDefaultProfile(),
+    );
+    const { initStorage } = await loadStorageModule();
 
     await initStorage();
 
     expect(authMocks.signOutUser).toHaveBeenCalled();
-    expect(isUserSignedIn()).toBe(false);
+    expect(authMocks.signInAnonymouslyUser).toHaveBeenCalled();
     expect(consoleWarn).toHaveBeenCalledWith(
       expect.stringContaining('Firestore access denied'),
       permissionError,

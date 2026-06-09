@@ -19,6 +19,7 @@ export interface LeaderboardEntry {
 
 export const TOP_RECORDS_PER_LEVEL = 10;
 export const MAX_VALID_SCORE = 9999;
+export const MAX_PLAYER_NAME_LENGTH = 30;
 
 export function deduplicateLeaderboardByName(
   records: GameRecord[],

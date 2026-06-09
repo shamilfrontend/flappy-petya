@@ -1,8 +1,7 @@
 import {
   getAuth,
-  GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithPopup,
+  signInAnonymously,
   signOut,
   type User,
 } from 'firebase/auth';
@@ -64,20 +63,6 @@ export function isUserAuthenticated(): boolean {
   return currentUser !== null;
 }
 
-export function getAuthDisplayName(): string {
-  if (!currentUser) {
-    return '';
-  }
-
-  const displayName = currentUser.displayName?.trim();
-  if (displayName) {
-    return displayName;
-  }
-
-  const emailPrefix = currentUser.email?.split('@')[0]?.trim();
-  return emailPrefix ?? '';
-}
-
 export function getAuthErrorMessage(error: unknown): string {
   const code = error && typeof error === 'object' && 'code' in error
     ? String((error as { code: string }).code)
@@ -85,17 +70,13 @@ export function getAuthErrorMessage(error: unknown): string {
 
   switch (code) {
     case 'auth/operation-not-allowed':
-      return 'Вход через Google не включён в Firebase. Откройте Firebase Console → Authentication → Sign-in method и включите Google.';
-    case 'auth/popup-closed-by-user':
-      return 'Вход отменён.';
-    case 'auth/popup-blocked':
-      return 'Браузер заблокировал окно входа. Разрешите всплывающие окна для этого сайта.';
+      return 'Анонимный вход не включён в Firebase. Откройте Firebase Console → Authentication → Sign-in method и включите Anonymous.';
     default:
-      return 'Не удалось войти через Google. Попробуйте ещё раз.';
+      return 'Не удалось выполнить вход. Попробуйте ещё раз.';
   }
 }
 
-export async function signInWithGoogle(): Promise<User | null> {
+export async function signInAnonymouslyUser(): Promise<User | null> {
   if (!isFirebaseEnabled()) {
     return null;
   }
@@ -104,14 +85,13 @@ export async function signInWithGoogle(): Promise<User | null> {
   await waitForAuthReady();
 
   const auth = getAuth();
-  const provider = new GoogleAuthProvider();
 
   try {
-    const credential = await signInWithPopup(auth, provider);
+    const credential = await signInAnonymously(auth);
     currentUser = credential.user;
     return credential.user;
   } catch (error) {
-    console.error('Google sign-in failed', error);
+    console.error('Anonymous sign-in failed', error);
     throw error;
   }
 }

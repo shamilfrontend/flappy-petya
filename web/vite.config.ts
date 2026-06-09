@@ -1,8 +1,9 @@
 import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
 
-const isAndroidBuild = process.env.VITE_BUILD_TARGET === 'android';
-const base = isAndroidBuild ? './' : '/flappy-petya/';
+const isNativeBuild = process.env.VITE_BUILD_TARGET === 'android'
+  || process.env.VITE_BUILD_TARGET === 'ios';
+const base = isNativeBuild ? './' : '/flappy-petya/';
 
 export default defineConfig({
   base,
@@ -22,7 +23,17 @@ export default defineConfig({
       ],
       manifest: false,
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,webp,svg,webmanifest}'],
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/(firestore|identitytoolkit|securetoken)\.googleapis\.com\//,
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: /^https:\/\/.*\.firebaseapp\.com\//,
+            handler: 'NetworkOnly',
+          },
+        ],
       },
     }),
   ],

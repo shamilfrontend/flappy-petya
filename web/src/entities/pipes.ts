@@ -127,15 +127,14 @@ export class Pipes {
     for (let i = 0; i < this.pipes.length; i++) {
       const pipe = this.pipes[i];
 
-      if (i === 0) {
-        if (!pipe.passed && pipe.x + pipe.width < GOOSE_X) {
-          pipe.passed = true;
-          onScore();
-        }
+      if (i === 0 && !pipe.passed && pipe.x + pipe.width < GOOSE_X) {
+        pipe.passed = true;
+        onScore();
+      }
 
-        if (this.checkCollision(goose, pipe)) {
-          onCollision();
-        }
+      if (this.checkCollision(goose, pipe)) {
+        onCollision();
+        return;
       }
 
       pipe.x -= this.pipeSpeed * dt;

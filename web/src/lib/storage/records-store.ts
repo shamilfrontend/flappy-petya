@@ -66,6 +66,7 @@ export async function upsertLeaderboardEntry(
   level: DifficultyLevel,
   name: string,
   score: number,
+  gameFrames: number,
 ): Promise<void> {
   const ref = leaderboardDoc(db, level, uid);
   const snapshot = await getDoc(ref);
@@ -78,11 +79,19 @@ export async function upsertLeaderboardEntry(
     return;
   }
 
+  const currentGameFrames = snapshot.exists()
+    ? Number(snapshot.data().gameFrames) || 0
+    : 0;
+  const nextGameFrames = nextScore > currentScore
+    ? gameFrames
+    : Math.max(currentGameFrames, gameFrames);
+
   await setDoc(
     ref,
     {
       name,
       score: nextScore,
+      gameFrames: nextGameFrames,
       updatedAt: serverTimestamp(),
     },
     { merge: true },

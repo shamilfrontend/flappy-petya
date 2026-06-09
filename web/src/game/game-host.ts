@@ -1,0 +1,70 @@
+import type { SoundManager } from '../audio/sound';
+import type { Goose } from '../entities/goose';
+import type { Pipes } from '../entities/pipes';
+import type { Sprites } from '../graphics/sprites';
+import type { ButtonRect } from '../graphics/ui-text';
+import type { HapticManager } from '../input/haptic';
+import type { ViewportState } from '../lib/viewport';
+import type { MessageOverlay } from '../ui/message-overlay';
+import type { NameInputOverlay } from '../ui/name-input';
+import type { DifficultyLevel } from './difficulty';
+import type { GameState } from './states';
+
+export interface GameHost {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  viewport: ViewportState;
+  sprites: Sprites;
+  gameOverImg: HTMLImageElement;
+  logoImg: HTMLImageElement;
+  goose: Goose;
+  pipes: Pipes;
+  sound: SoundManager;
+  haptic: HapticManager;
+  messageOverlay: MessageOverlay;
+  nameInputOverlay: NameInputOverlay;
+
+  currentState: GameState;
+  fgpos: number;
+  frames: number;
+  gameFrames: number;
+  score: number;
+  playerName: string;
+  personalBest: number;
+  isAwaitingAuth: boolean;
+  selectedDifficulty: DifficultyLevel;
+  recordsLevelTab: DifficultyLevel;
+  countdownStep: number;
+  countdownTimer: number;
+  isNewBest: boolean;
+  fgScrollSpeed: number;
+  hasSavedCurrentScore: boolean;
+  lastScoredLevel: DifficultyLevel | undefined;
+  deathAnimTimer: number;
+  shakeTimer: number;
+  shakeIntensity: number;
+
+  okBtn: ButtonRect;
+  recordsBtn: ButtonRect;
+  playerNameBtn: ButtonRect;
+  backBtn: ButtonRect;
+  recordsTabBtns: ButtonRect[];
+  difficultyTabBtns: ButtonRect[];
+  playBtn: ButtonRect;
+  settingsBtn: ButtonRect;
+  soundToggleBtn: ButtonRect;
+  hapticToggleBtn: ButtonRect;
+  pauseBtn: ButtonRect;
+
+  layoutUi(): void;
+  syncStateFromStorage(): void;
+  applyDifficulty(level: DifficultyLevel, persist?: boolean): void;
+  getPlayButtonLabel(): string;
+  triggerDeath(): void;
+  startActiveGame(): void;
+  togglePause(): void;
+  performJump(): void;
+  beginGame(name: string): Promise<void>;
+  startGame(): Promise<void>;
+  openRecords(): Promise<void>;
+}

@@ -5,12 +5,9 @@ import {
   isFirebaseEnabled,
 } from '../firebase/app';
 import {
-  getAuthDisplayName,
-  getAuthErrorMessage,
   getCurrentUid,
   initAuth,
-  isUserAuthenticated,
-  signInWithGoogle,
+  signInAnonymouslyUser,
   signOutUser,
   waitForAuthReady,
 } from '../firebase/auth';
@@ -26,6 +23,7 @@ import {
   setLeaderboardCacheLoading,
   setStorageCacheReady,
 } from './cache';
+import { getLocalPlayerName, saveLocalPlayerName } from './local';
 import { migrateLocalDataToFirestore } from './migrate';
 import {
   fetchPlayerProfile,
@@ -39,9 +37,19 @@ import {
   upsertLeaderboardEntry,
 } from './records-store';
 import {
+  hasMinWallClockElapsed,
+  isValidGameFrames,
+  isValidScoreValue,
+} from './score-validation';
+import {
+  clearCachedSession,
+  completeGameSession,
+  getCachedActiveSession,
+  startGameSession,
+} from './session-store';
+import {
   createDefaultProfile,
   deduplicateLeaderboardByName,
-  MAX_VALID_SCORE,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
   type PlayerProfile,
@@ -55,13 +63,74 @@ export {
 
 type StorageTask = () => Promise<void>;
 
+const QUEUE_RETRY_BASE_MS = 2000;
+const QUEUE_RETRY_MAX_MS = 30000;
+
 const pendingTasks: StorageTask[] = [];
 let isProcessingQueue = false;
 let currentUid: string | null = null;
+let queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let queueRetryAttempt = 0;
+const ONLINE_HANDLER_KEY = '__flappyPetyaStorageOnlineHandler';
 
 function resetStorageCache(): void {
   setCacheProfile(createDefaultProfile());
   clearLeaderboardCache();
+}
+
+function clearQueueRetryTimer(): void {
+  if (queueRetryTimer !== null) {
+    clearTimeout(queueRetryTimer);
+    queueRetryTimer = null;
+  }
+}
+
+function clearQueueState(): void {
+  pendingTasks.length = 0;
+  isProcessingQueue = false;
+  queueRetryAttempt = 0;
+  clearQueueRetryTimer();
+}
+
+function scheduleQueueRetry(): void {
+  clearQueueRetryTimer();
+
+  const delay = Math.min(
+    QUEUE_RETRY_BASE_MS * 2 ** queueRetryAttempt,
+    QUEUE_RETRY_MAX_MS,
+  );
+  queueRetryAttempt += 1;
+
+  queueRetryTimer = setTimeout(() => {
+    queueRetryTimer = null;
+    void processQueue();
+  }, delay);
+}
+
+function handleOnline(): void {
+  if (pendingTasks.length === 0) {
+    return;
+  }
+
+  queueRetryAttempt = 0;
+  clearQueueRetryTimer();
+  void processQueue();
+}
+
+function registerOnlineListener(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const windowState = window as typeof window & Record<string, (() => void) | undefined>;
+  const previousHandler = windowState[ONLINE_HANDLER_KEY];
+
+  if (previousHandler) {
+    window.removeEventListener('online', previousHandler);
+  }
+
+  windowState[ONLINE_HANDLER_KEY] = handleOnline;
+  window.addEventListener('online', handleOnline);
 }
 
 function enqueueTask(task: StorageTask): void {
@@ -84,6 +153,7 @@ async function processQueue(): Promise<void> {
   }
 
   isProcessingQueue = true;
+  let hadFailure = false;
 
   while (pendingTasks.length > 0) {
     const task = pendingTasks.shift();
@@ -96,11 +166,19 @@ async function processQueue(): Promise<void> {
     } catch (error) {
       console.error('Firebase storage task failed', error);
       pendingTasks.unshift(task);
+      hadFailure = true;
       break;
     }
   }
 
   isProcessingQueue = false;
+
+  if (hadFailure && pendingTasks.length > 0) {
+    scheduleQueueRetry();
+  } else if (pendingTasks.length === 0) {
+    queueRetryAttempt = 0;
+    clearQueueRetryTimer();
+  }
 }
 
 async function loadAllLeaderboards(): Promise<void> {
@@ -131,11 +209,20 @@ async function loadAllLeaderboards(): Promise<void> {
 }
 
 async function clearStaleAuthSession(): Promise<void> {
-  pendingTasks.length = 0;
-  isProcessingQueue = false;
+  clearQueueState();
+  clearCachedSession();
   currentUid = null;
   resetStorageCache();
   await signOutUser();
+
+  try {
+    const user = await signInAnonymouslyUser();
+    if (user?.uid) {
+      await loadStorageForUser(user.uid);
+    }
+  } catch (error) {
+    console.error('Failed to restore anonymous session', error);
+  }
 }
 
 async function loadStorageForUser(uid: string): Promise<void> {
@@ -147,16 +234,18 @@ async function loadStorageForUser(uid: string): Promise<void> {
   }
 
   try {
-    const googleName = getAuthDisplayName();
+    const localName = getLocalPlayerName();
     let profile = await fetchPlayerProfile(db, uid);
 
     if (!profile?.name) {
-      profile = await migrateLocalDataToFirestore(db, uid, googleName);
-    } else if (!profile.name.trim() && googleName) {
-      profile = { ...profile, name: googleName };
+      profile = await migrateLocalDataToFirestore(db, uid);
+    } else if (!profile.name.trim() && localName) {
+      profile = { ...profile, name: localName };
       await savePlayerProfile(db, uid, profile);
-    } else {
-      await syncProfileBestsToLeaderboard(uid, profile);
+    }
+
+    if (profile.name.trim() && !localName) {
+      saveLocalPlayerName(profile.name);
     }
 
     setCacheProfile(profile);
@@ -165,7 +254,7 @@ async function loadStorageForUser(uid: string): Promise<void> {
   } catch (error) {
     if (isFirestorePermissionError(error)) {
       console.warn(
-        'Firestore access denied — сессия сброшена. Проверьте деплой firestore.rules и вход через Google.',
+        'Firestore access denied — сессия сброшена. Проверьте деплой firestore.rules и Anonymous Auth.',
         error,
       );
       await clearStaleAuthSession();
@@ -176,8 +265,22 @@ async function loadStorageForUser(uid: string): Promise<void> {
   }
 }
 
+function hydrateProfileFromLocalStorage(): void {
+  const localName = getLocalPlayerName();
+  if (!localName) {
+    return;
+  }
+
+  setCacheProfile({
+    ...getCacheProfile(),
+    name: localName,
+  });
+}
+
 export async function initStorage(): Promise<void> {
   resetStorageCache();
+  registerOnlineListener();
+  hydrateProfileFromLocalStorage();
 
   if (!isFirebaseEnabled()) {
     setStorageCacheReady(true);
@@ -189,7 +292,12 @@ export async function initStorage(): Promise<void> {
     initAuth();
     await waitForAuthReady();
 
-    const uid = getCurrentUid();
+    let uid = getCurrentUid();
+    if (!uid) {
+      const user = await signInAnonymouslyUser();
+      uid = user?.uid ?? null;
+    }
+
     if (uid) {
       await loadStorageForUser(uid);
     }
@@ -197,49 +305,6 @@ export async function initStorage(): Promise<void> {
     console.error('Storage initialization failed', error);
   } finally {
     setStorageCacheReady(true);
-  }
-}
-
-export function isAuthRequired(): boolean {
-  return isFirebaseEnabled();
-}
-
-export function isUserSignedIn(): boolean {
-  return isFirebaseEnabled() && isUserAuthenticated();
-}
-
-export interface SignInResult {
-  ok: boolean;
-  errorMessage?: string;
-}
-
-export async function signInWithGoogleAccount(): Promise<SignInResult> {
-  if (!isFirebaseEnabled()) {
-    return { ok: false, errorMessage: 'Firebase не настроен.' };
-  }
-
-  try {
-    const user = await signInWithGoogle();
-    if (!user) {
-      return { ok: false };
-    }
-
-    await loadStorageForUser(user.uid);
-    return { ok: true };
-  } catch (error) {
-    console.error('Google account sign-in failed', error);
-    return { ok: false, errorMessage: getAuthErrorMessage(error) };
-  }
-}
-
-export async function signOutFromGame(): Promise<void> {
-  pendingTasks.length = 0;
-  isProcessingQueue = false;
-  currentUid = null;
-  resetStorageCache();
-
-  if (isFirebaseEnabled()) {
-    await signOutUser();
   }
 }
 
@@ -256,11 +321,7 @@ export function isFirebaseSyncPending(): boolean {
 }
 
 export function getSavedPlayerName(): string {
-  if (isFirebaseEnabled()) {
-    return getCacheProfile().name || getAuthDisplayName();
-  }
-
-  return getCacheProfile().name;
+  return getLocalPlayerName() || getCacheProfile().name;
 }
 
 export function getSelectedDifficulty(): DifficultyLevel | undefined {
@@ -279,6 +340,7 @@ export function savePlayerName(name: string): void {
   };
 
   setCacheProfile(profile);
+  saveLocalPlayerName(trimmedName);
 
   const uid = currentUid ?? getCurrentUid();
   if (!uid || !isFirebaseEnabled()) {
@@ -372,32 +434,45 @@ function getProfileLeaderboardRecords(profile: PlayerProfile): GameRecord[] {
     }));
 }
 
-async function syncProfileBestsToLeaderboard(
-  uid: string,
-  profile: PlayerProfile,
-): Promise<void> {
-  const trimmedName = profile.name.trim();
-  if (!trimmedName) {
-    return;
+export interface PrepareGameSessionResult {
+  ok: boolean;
+  errorMessage?: string;
+}
+
+export async function prepareGameSession(
+  level: DifficultyLevel,
+): Promise<PrepareGameSessionResult> {
+  if (!isFirebaseEnabled()) {
+    return { ok: true };
+  }
+
+  const uid = currentUid ?? getCurrentUid();
+  if (!uid) {
+    return { ok: true };
   }
 
   const db = getFirestoreDb();
   if (!db) {
-    return;
+    return { ok: false, errorMessage: 'Не удалось подключиться к серверу рекордов.' };
   }
 
-  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
-  await Promise.all(
-    levels.map((level) =>
-      upsertLeaderboardEntry(
-        db,
-        uid,
-        level,
-        trimmedName,
-        profile.bests[level],
-      ),
-    ),
-  );
+  try {
+    await startGameSession(db, uid, level);
+    return { ok: true };
+  } catch (error) {
+    console.error('Failed to start game session', error);
+    if (isFirestorePermissionError(error)) {
+      return {
+        ok: false,
+        errorMessage: 'Не удалось начать игровую сессию. Проверьте подключение и правила Firestore.',
+      };
+    }
+
+    return {
+      ok: false,
+      errorMessage: 'Не удалось начать игровую сессию. Попробуйте позже.',
+    };
+  }
 }
 
 function mergeTopRecords(
@@ -496,10 +571,29 @@ export function saveRecord(
   name: string,
   level: DifficultyLevel,
   score: number,
+  gameFrames: number,
 ): void {
   const trimmedName = name.trim();
-  if (!trimmedName || score <= 0 || score > MAX_VALID_SCORE) {
+  if (!trimmedName || !isValidScoreValue(score)) {
     return;
+  }
+
+  const uid = currentUid ?? getCurrentUid();
+  const usesFirebase = Boolean(uid && isFirebaseEnabled());
+
+  if (usesFirebase) {
+    const session = getCachedActiveSession();
+    if (!session || session.level !== level) {
+      return;
+    }
+
+    if (!isValidGameFrames(score, gameFrames)) {
+      return;
+    }
+
+    if (!hasMinWallClockElapsed(session.startedAtMs, Date.now(), score)) {
+      return;
+    }
   }
 
   const profile = getCacheProfile();
@@ -518,14 +612,13 @@ export function saveRecord(
     });
   }
 
-  const uid = currentUid ?? getCurrentUid();
-  if (!uid || !isFirebaseEnabled()) {
+  if (!usesFirebase) {
     return;
   }
 
   enqueueTask(async () => {
     const db = getFirestoreDb();
-    if (!db) {
+    if (!db || !uid) {
       return;
     }
 
@@ -534,7 +627,14 @@ export function saveRecord(
       ? currentProfile
       : { ...currentProfile, name: trimmedName };
 
-    await upsertLeaderboardEntry(db, uid, level, trimmedName, score);
+    await upsertLeaderboardEntry(
+      db,
+      uid,
+      level,
+      trimmedName,
+      score,
+      gameFrames,
+    );
 
     const updatedProfile = await updatePlayerBest(
       db,
@@ -544,6 +644,8 @@ export function saveRecord(
       profileForSave,
     );
     setCacheProfile(updatedProfile);
+
+    await completeGameSession(db, uid);
 
     const records = await fetchLeaderboard(db, level);
     syncLeaderboardCache(level, records);

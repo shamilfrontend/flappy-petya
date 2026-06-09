@@ -3,8 +3,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isSignedIn() {
-      return request.auth != null
-        && request.auth.token.firebase.sign_in_provider == 'google.com';
+      return request.auth != null;
     }
 
     function isOwner(userId) {
@@ -15,8 +14,87 @@ service cloud.firestore {
       return name is string && name.size() > 0 && name.size() <= 24;
     }
 
+    function isValidLevel(level) {
+      return level == 'easy' || level == 'medium' || level == 'hard';
+    }
+
     function isValidScore(score) {
       return score is number && score >= 1 && score <= 9999;
+    }
+
+    function minGameFrames(score) {
+      return score <= 0 ? 0 : (score == 1 ? 250 : 250 + (score - 1) * 120);
+    }
+
+    function maxGameFrames(score) {
+      return score <= 0 ? 0 : 250 + score * 400;
+    }
+
+    function minWallClockMs(score) {
+      return score <= 0 ? 0 : (score == 1 ? 4000 : 4000 + (score - 1) * 1800);
+    }
+
+    function isValidGameFrames(score, gameFrames) {
+      return gameFrames is number
+        && gameFrames >= minGameFrames(score)
+        && gameFrames <= maxGameFrames(score);
+    }
+
+    function sessionDoc(userId) {
+      return get(/databases/$(database)/documents/gameSessions/$(userId));
+    }
+
+    function hasActiveSessionForLevel(userId, level) {
+      return sessionDoc(userId).data.status == 'active'
+        && sessionDoc(userId).data.level == level;
+    }
+
+    function hasMinPlayTime(userId, score) {
+      return request.time > sessionDoc(userId).data.startedAt
+        + duration.value(minWallClockMs(score), 'ms');
+    }
+
+    function leaderboardDoc(userId, level) {
+      return get(/databases/$(database)/documents/leaderboard/$(level)/scores/$(userId));
+    }
+
+    function isBestWithinLeaderboard(userId, level, bestScore) {
+      return !leaderboardDoc(userId, level).exists()
+        || bestScore <= leaderboardDoc(userId, level).data.score;
+    }
+
+    function isScoreOnlyNameUpdate() {
+      return resource.exists()
+        && request.resource.data.score == resource.data.score
+        && request.resource.data.gameFrames == resource.data.gameFrames;
+    }
+
+    match /gameSessions/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && request.resource.data.status == 'active'
+        && isValidLevel(request.resource.data.level)
+        && request.resource.data.startedAt == request.time
+        && request.resource.data.completedAt == null;
+
+      allow update: if isOwner(userId) && (
+        (
+          request.resource.data.status == 'completed'
+          && resource.data.status == 'active'
+          && request.resource.data.level == resource.data.level
+          && request.resource.data.startedAt == resource.data.startedAt
+        )
+        || (
+          request.resource.data.status == 'active'
+          && resource.data.status == 'completed'
+          && isValidLevel(request.resource.data.level)
+          && request.resource.data.startedAt == request.time
+          && request.resource.data.completedAt == null
+        )
+      );
+
+      allow delete: if false;
     }
 
     match /players/{userId} {
@@ -28,21 +106,51 @@ service cloud.firestore {
         && request.resource.data.bests.hard is number
         && request.resource.data.bests.easy >= 0
         && request.resource.data.bests.medium >= 0
-        && request.resource.data.bests.hard >= 0;
+        && request.resource.data.bests.hard >= 0
+        && request.resource.data.bests.easy <= 9999
+        && request.resource.data.bests.medium <= 9999
+        && request.resource.data.bests.hard <= 9999
+        && isBestWithinLeaderboard(userId, 'easy', request.resource.data.bests.easy)
+        && isBestWithinLeaderboard(userId, 'medium', request.resource.data.bests.medium)
+        && isBestWithinLeaderboard(userId, 'hard', request.resource.data.bests.hard);
+      allow delete: if false;
     }
 
     match /leaderboard/{level}/scores/{userId} {
       allow read: if true;
+
       allow create: if isOwner(userId)
-        && isValidPlayerName(request.resource.data.name)
-        && isValidScore(request.resource.data.score);
-      allow update: if isOwner(userId)
+        && isValidLevel(level)
         && isValidPlayerName(request.resource.data.name)
         && isValidScore(request.resource.data.score)
+        && isValidGameFrames(request.resource.data.score, request.resource.data.gameFrames)
+        && hasActiveSessionForLevel(userId, level)
+        && hasMinPlayTime(userId, request.resource.data.score);
+
+      allow update: if isOwner(userId)
+        && isValidLevel(level)
         && (
-          !resource.exists()
-          || request.resource.data.score >= resource.data.score
+          (
+            isScoreOnlyNameUpdate()
+            && isValidPlayerName(request.resource.data.name)
+          )
+          || (
+            isValidPlayerName(request.resource.data.name)
+            && isValidScore(request.resource.data.score)
+            && isValidGameFrames(
+              request.resource.data.score,
+              request.resource.data.gameFrames,
+            )
+            && hasActiveSessionForLevel(userId, level)
+            && hasMinPlayTime(userId, request.resource.data.score)
+            && (
+              !resource.exists()
+              || request.resource.data.score >= resource.data.score
+            )
+          )
         );
+
+      allow delete: if false;
     }
   }
 }

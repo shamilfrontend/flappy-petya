@@ -77,13 +77,14 @@ describe('records-store', () => {
         data: () => ({ score: 15 }),
       });
 
-      await upsertLeaderboardEntry(db, 'uid-1', 'medium', 'Петя', 10);
+      await upsertLeaderboardEntry(db, 'uid-1', 'medium', 'Петя', 10, 490);
 
       expect(setDoc).toHaveBeenCalledWith(
         'leaderboard/medium/scores/uid-1',
         {
           name: 'Петя',
           score: 15,
+          gameFrames: 490,
           updatedAt: { type: 'timestamp' },
         },
         { merge: true },
@@ -96,11 +97,11 @@ describe('records-store', () => {
         data: () => ({ score: 5 }),
       });
 
-      await upsertLeaderboardEntry(db, 'uid-1', 'easy', 'Петя', 12);
+      await upsertLeaderboardEntry(db, 'uid-1', 'easy', 'Петя', 12, 1330);
 
       expect(setDoc).toHaveBeenCalledWith(
         'leaderboard/easy/scores/uid-1',
-        expect.objectContaining({ score: 12 }),
+        expect.objectContaining({ score: 12, gameFrames: 1330 }),
         { merge: true },
       );
     });
@@ -111,7 +112,7 @@ describe('records-store', () => {
         data: () => ({}),
       });
 
-      await upsertLeaderboardEntry(db, 'uid-1', 'easy', 'Петя', 0);
+      await upsertLeaderboardEntry(db, 'uid-1', 'easy', 'Петя', 0, 0);
 
       expect(setDoc).not.toHaveBeenCalled();
     });

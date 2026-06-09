@@ -2,19 +2,14 @@ import { Sprite } from './sprite';
 
 export interface Sprites {
   goose: Sprite[];
-  petyaSplash: Sprite;
 }
 
-export function initSprites(
-  gooseImg: HTMLImageElement,
-  splashImg: HTMLImageElement,
-): Sprites {
+export function initSprites(gooseImg: HTMLImageElement): Sprites {
   return {
     goose: [
       new Sprite(gooseImg, 0, 0, 32, 24),
       new Sprite(gooseImg, 32, 0, 32, 24),
       new Sprite(gooseImg, 64, 0, 32, 24),
     ],
-    petyaSplash: new Sprite(splashImg, 0, 0, 55, 100),
   };
 }

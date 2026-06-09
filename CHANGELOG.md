@@ -2,6 +2,70 @@
 
 ## Unreleased
 
+### Changed
+
+- Google Sign-In заменён на тихий Firebase Anonymous Auth; имя игрока — обязательное поле до 24 символов в `localStorage`
+- Firestore rules: `isSignedIn()` без проверки провайдера, лимит имени 30 символов
+- Убраны UI «Войти через Google» и кнопка «Выйти» на Splash
+
+## 2.0.0
+
+### Added
+
+- Playwright E2E smoke-тесты (`npm run test:e2e`) и job `e2e` в CI
+- `game-announcer` (`aria-live`) — озвучивание счёта и «Новый рекорд!» для screen readers
+- Enter на Splash запускает игру (клавиатурная навигация MVP)
+- WebP-ассеты с PNG fallback (`loadImageWithFallback`, `npm run assets:webp`)
+- Preload критичных спрайтов в `index.html`
+- Детерминированный screen shake (`screen-shake.ts`) вместо `Math.random()`
+- Capacitor iOS (`ios/`, `npm run cap:open:ios`, `npm run build:ios`)
+- `@capacitor/app` — обработка Android back button (пауза / назад / выход)
+
+### Changed
+
+- PWA Workbox: Firebase API — `NetworkOnly`, в precache добавлен `webp`
+- `VITE_BUILD_TARGET=ios` использует относительные пути (`base: './'`)
+
+## 1.5.0
+
+### Changed
+
+- Рефакторинг `game.ts`: декомпозиция на `game-loop`, `game-renderer`, `game-updater`, `game-auth`, `game-input`, `game-layout`, `screen-handlers/`
+- Константы `RESIZE_DEBOUNCE_MS`, `COUNTDOWN_*` перенесены в `config.ts`
+- Интерфейс `GameHost` для shared state между модулями
+
+## 1.4.0
+
+### Added
+
+- Персонаж `petyaSplash` на Splash-экране между подзаголовком и табами сложности
+- `NameInputOverlay` при пустом имени игрока (Google без displayName, dev без Firebase)
+- Константа `MAX_PLAYER_NAME_LENGTH` (24) — единый лимит с Firestore rules
+
+### Changed
+
+- Сообщение об отсутствии Canvas переведено на русский
+
+### Removed
+
+- Неиспользуемый re-export `lib/player-name.ts`
+
+## 1.3.0
+
+### Added
+
+- `MessageOverlay` вместо блокирующих `alert` для ошибок Canvas, ассетов и Google Sign-In
+- `Game.destroy()` — снятие rAF, keyboard, resize и pointer listeners
+- Таймаут загрузки изображений (`loadImage`, 15 с)
+- Глобальный обработчик `unhandledrejection` с логированием
+- Сброс `lastFrameTime` при возврате на вкладку (`visibilitychange`)
+
+### Fixed
+
+- UI не блокируется навсегда при ошибке sign-out (`isAwaitingAuth` + `try/finally`)
+- Firebase queue автоматически retry с backoff и при событии `online`
+- Коллизия проверяется со всеми трубами, не только с первой
+
 ## 1.2.0
 
 ### Added

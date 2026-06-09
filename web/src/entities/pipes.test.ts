@@ -166,17 +166,54 @@ describe('Pipes', () => {
     expect(onScore).toHaveBeenCalled();
   });
 
-  it('checks collision only for the first pipe', () => {
+  it('detects collision with later pipes after the first one passes', () => {
     const onScore = vi.fn();
     const onCollision = vi.fn();
 
-    goose.y = 100;
+    goose.y = 280;
+    pipes.seedInitial(width, height);
 
-    for (let frame = 0; frame < PIPE_START_DELAY + 300; frame += 1) {
+    for (let frame = 0; frame < 2000; frame += 1) {
       pipes.update(width, height, goose, 1, onCollision, onScore);
+
+      if (onScore.mock.calls.length > 0) {
+        break;
+      }
     }
 
-    expect(onCollision.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(onScore).toHaveBeenCalled();
+    expect(onCollision).not.toHaveBeenCalled();
+
+    goose.y = 100;
+
+    for (let frame = 0; frame < 1000; frame += 1) {
+      pipes.update(width, height, goose, 1, onCollision, onScore);
+
+      if (onCollision.mock.calls.length > 0) {
+        break;
+      }
+    }
+
+    expect(onCollision).toHaveBeenCalled();
+  });
+
+  it('increments score only when the first pipe passes the goose', () => {
+    const onScore = vi.fn();
+    const onCollision = vi.fn();
+
+    goose.y = 280;
+    pipes.seedInitial(width, height);
+
+    for (let frame = 0; frame < 2000; frame += 1) {
+      pipes.update(width, height, goose, 1, onCollision, onScore);
+
+      if (onScore.mock.calls.length > 0) {
+        break;
+      }
+    }
+
+    expect(onScore).toHaveBeenCalledOnce();
+    expect(onCollision).not.toHaveBeenCalled();
   });
 
   it('creates pipes with configured width', () => {

@@ -27,7 +27,7 @@ export default [
         'error',
         {
           props: true,
-          ignorePropertyModificationsFor: ['canvas', 'ctx'],
+          ignorePropertyModificationsFor: ['canvas', 'ctx', 'host'],
         },
       ],
       '@typescript-eslint/no-use-before-define': [
@@ -51,6 +51,9 @@ export default [
       'node_modules/**',
       '.venv-assets/**',
       '../android/**',
+      'e2e/**',
+      'playwright.config.ts',
+      'scripts/**',
     ],
   },
 ];

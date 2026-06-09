@@ -1,5 +1,4 @@
-const DEFAULT_NAME = 'Игрок';
-const MAX_NAME_LENGTH = 20;
+import { MAX_PLAYER_NAME_LENGTH } from '../lib/storage/types';
 
 export interface NameInputResult {
   name: string;
@@ -16,6 +15,7 @@ export class NameInputOverlay {
   private readonly root: HTMLDivElement;
   private readonly input: HTMLInputElement;
   private readonly submitBtn: HTMLButtonElement;
+  private readonly errorHint: HTMLParagraphElement;
   private resolve: ((result: NameInputResult) => void) | null = null;
 
   constructor() {
@@ -33,21 +33,30 @@ export class NameInputOverlay {
     this.input = document.createElement('input');
     this.input.className = 'name-dialog__input';
     this.input.type = 'text';
-    this.input.maxLength = MAX_NAME_LENGTH;
-    this.input.placeholder = DEFAULT_NAME;
+    this.input.maxLength = MAX_PLAYER_NAME_LENGTH;
+    this.input.placeholder = 'Ваше имя';
     this.input.autocomplete = 'off';
     this.input.enterKeyHint = 'go';
+    this.input.required = true;
+
+    this.errorHint = document.createElement('p');
+    this.errorHint.className = 'name-dialog__error';
+    this.errorHint.hidden = true;
+    this.errorHint.textContent = 'Введите имя';
 
     this.submitBtn = document.createElement('button');
     this.submitBtn.className = 'name-dialog__button';
     this.submitBtn.type = 'button';
     this.submitBtn.textContent = 'Играть';
 
-    dialog.append(title, this.input, this.submitBtn);
+    dialog.append(title, this.input, this.errorHint, this.submitBtn);
     this.root.append(dialog);
     document.body.append(this.root);
 
     this.submitBtn.addEventListener('click', () => this.confirm());
+    this.input.addEventListener('input', () => {
+      this.errorHint.hidden = true;
+    });
     this.input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
@@ -58,6 +67,7 @@ export class NameInputOverlay {
 
   prompt(defaultName = '', options: PromptOptions = {}): Promise<NameInputResult> {
     this.input.value = defaultName;
+    this.errorHint.hidden = true;
     this.submitBtn.textContent = options.submitLabel ?? DEFAULT_SUBMIT_LABEL;
     this.root.hidden = false;
     this.input.focus();
@@ -70,10 +80,17 @@ export class NameInputOverlay {
 
   hide(): void {
     this.root.hidden = true;
+    this.errorHint.hidden = true;
   }
 
   private confirm(): void {
-    const name = this.input.value.trim() || DEFAULT_NAME;
+    const name = this.input.value.trim();
+    if (!name) {
+      this.errorHint.hidden = false;
+      this.input.focus();
+      return;
+    }
+
     this.hide();
     this.resolve?.({ name, confirmed: true });
     this.resolve = null;

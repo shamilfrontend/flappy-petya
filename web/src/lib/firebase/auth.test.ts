@@ -1,15 +1,13 @@
 const {
   getAuth,
   onAuthStateChanged,
-  signInWithPopup,
+  signInAnonymously,
   signOut,
-  GoogleAuthProvider,
 } = vi.hoisted(() => ({
   getAuth: vi.fn(() => ({ app: 'auth' })),
   onAuthStateChanged: vi.fn(),
-  signInWithPopup: vi.fn(),
+  signInAnonymously: vi.fn(),
   signOut: vi.fn(),
-  GoogleAuthProvider: class MockGoogleAuthProvider {},
 }));
 
 const { isFirebaseEnabled, initFirebaseApp } = vi.hoisted(() => ({
@@ -25,9 +23,8 @@ vi.mock('./app', () => ({
 vi.mock('firebase/auth', () => ({
   getAuth,
   onAuthStateChanged,
-  signInWithPopup,
+  signInAnonymously,
   signOut,
-  GoogleAuthProvider,
 }));
 
 describe('firebase auth', () => {
@@ -49,75 +46,77 @@ describe('firebase auth', () => {
     isFirebaseEnabled.mockReturnValue(true);
     onAuthStateChanged.mockImplementation((_auth, callback) => {
       queueMicrotask(() => callback({
-        uid: 'google-uid',
-        displayName: 'Петя',
-        email: 'petya@example.com',
+        uid: 'anon-uid',
       }));
       return vi.fn();
     });
 
-    const { waitForAuthReady, getCurrentUid, getAuthDisplayName } = await import('./auth');
+    const { waitForAuthReady, getCurrentUid } = await import('./auth');
 
     await waitForAuthReady();
 
-    expect(getCurrentUid()).toBe('google-uid');
-    expect(getAuthDisplayName()).toBe('Петя');
-    expect(signInWithPopup).not.toHaveBeenCalled();
+    expect(getCurrentUid()).toBe('anon-uid');
+    expect(signInAnonymously).not.toHaveBeenCalled();
   });
 
-  it('signs in with google popup', async () => {
+  it('signs in anonymously', async () => {
     isFirebaseEnabled.mockReturnValue(true);
     onAuthStateChanged.mockImplementation((_auth, callback) => {
       queueMicrotask(() => callback(null));
       return vi.fn();
     });
-    signInWithPopup.mockResolvedValue({
+    signInAnonymously.mockResolvedValue({
       user: {
-        uid: 'google-uid',
-        displayName: 'Петя',
-        email: 'petya@example.com',
+        uid: 'anon-uid',
       },
     });
 
-    const { waitForAuthReady, signInWithGoogle, getCurrentUid } = await import('./auth');
+    const { waitForAuthReady, signInAnonymouslyUser, getCurrentUid } = await import('./auth');
 
     await waitForAuthReady();
-    await expect(signInWithGoogle()).resolves.toEqual(
-      expect.objectContaining({ uid: 'google-uid' }),
+    await expect(signInAnonymouslyUser()).resolves.toEqual(
+      expect.objectContaining({ uid: 'anon-uid' }),
     );
-    expect(getCurrentUid()).toBe('google-uid');
-  });
-
-  it('falls back to email prefix when display name is missing', async () => {
-    isFirebaseEnabled.mockReturnValue(true);
-    onAuthStateChanged.mockImplementation((_auth, callback) => {
-      queueMicrotask(() => callback({
-        uid: 'google-uid',
-        displayName: '',
-        email: 'player@example.com',
-      }));
-      return vi.fn();
-    });
-
-    const { waitForAuthReady, getAuthDisplayName } = await import('./auth');
-
-    await waitForAuthReady();
-
-    expect(getAuthDisplayName()).toBe('player');
+    expect(getCurrentUid()).toBe('anon-uid');
   });
 
   it('maps operation-not-allowed to setup hint', async () => {
     const { getAuthErrorMessage } = await import('./auth');
 
     expect(getAuthErrorMessage({ code: 'auth/operation-not-allowed' })).toContain(
-      'Firebase',
+      'Anonymous',
     );
+  });
+
+  it('maps default auth errors', async () => {
+    const { getAuthErrorMessage } = await import('./auth');
+
+    expect(getAuthErrorMessage({ code: 'auth/unknown' })).toContain(
+      'Не удалось выполнить вход',
+    );
+    expect(getAuthErrorMessage(null)).toContain('Не удалось выполнить вход');
+  });
+
+  it('rethrows anonymous sign-in errors', async () => {
+    isFirebaseEnabled.mockReturnValue(true);
+    onAuthStateChanged.mockImplementation((_auth, callback) => {
+      queueMicrotask(() => callback(null));
+      return vi.fn();
+    });
+    signInAnonymously.mockRejectedValue({ code: 'auth/network-request-failed' });
+
+    const { waitForAuthReady, signInAnonymouslyUser } = await import('./auth');
+
+    await waitForAuthReady();
+    await expect(signInAnonymouslyUser()).rejects.toEqual({
+      code: 'auth/network-request-failed',
+    });
   });
 
   it('signs out current user', async () => {
     isFirebaseEnabled.mockReturnValue(true);
     onAuthStateChanged.mockImplementation((_auth, callback) => {
-      queueMicrotask(() => callback({ uid: 'google-uid', displayName: 'Петя' }));
+      queueMicrotask(() => callback({ uid: 'anon-uid' }));
       return vi.fn();
     });
     signOut.mockResolvedValue(undefined);

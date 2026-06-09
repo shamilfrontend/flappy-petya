@@ -26,6 +26,31 @@ function createMockImage(this: {
   };
 }
 
+function createHangingMockImage(this: {
+  listeners: Map<string, Array<() => void>>;
+  source: string;
+  addEventListener: (event: string, listener: () => void) => void;
+}) {
+  this.listeners = new Map();
+
+  Object.defineProperty(this, 'src', {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return this.source;
+    },
+    set(value: string) {
+      this.source = value;
+    },
+  });
+
+  this.addEventListener = (event: string, listener: () => void) => {
+    const handlers = this.listeners.get(event) ?? [];
+    handlers.push(listener);
+    this.listeners.set(event, handlers);
+  };
+}
+
 function createFailingMockImage(this: {
   listeners: Map<string, Array<() => void>>;
   source: string;
@@ -75,5 +100,28 @@ describe('loadImage', () => {
     await expect(loadImage('/missing.png')).rejects.toThrow(
       'Failed to load /missing.png',
     );
+  });
+
+  it('rejects when image load times out', async () => {
+    vi.stubGlobal('Image', createHangingMockImage as unknown as typeof Image);
+    const { loadImage } = await import('./load-image');
+
+    await expect(loadImage('/static/goose.png', 50)).rejects.toThrow(
+      'Timed out loading /static/goose.png',
+    );
+  });
+
+  it('resolves before timeout when image loads quickly', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Image', createMockImage as unknown as typeof Image);
+    const { IMAGE_LOAD_TIMEOUT_MS, loadImage } = await import('./load-image');
+
+    await expect(loadImage('/static/goose.png')).resolves.toMatchObject({
+      src: '/static/goose.png',
+    });
+
+    await vi.advanceTimersByTimeAsync(IMAGE_LOAD_TIMEOUT_MS);
+
+    vi.useRealTimers();
   });
 });
