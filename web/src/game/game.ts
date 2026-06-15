@@ -40,6 +40,7 @@ import { GameLoop } from './game-loop';
 import { renderGame } from './game-renderer';
 import { updateGame } from './game-updater';
 import { GAME_STATES, type GameState } from './states';
+import { transitionToState } from './state-transition';
 import type { ButtonRect } from '../graphics/ui-text';
 
 export { RESIZE_DEBOUNCE_MS } from './config';
@@ -96,6 +97,7 @@ export class Game implements GameHost {
   deathAnimTimer = 0;
   shakeTimer = 0;
   shakeIntensity = 0;
+  nextStartAllowedAtMs = 0;
 
   okBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   recordsBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
@@ -238,12 +240,12 @@ export class Game implements GameHost {
 
   togglePause(): void {
     if (this.currentState === GAME_STATES.Game) {
-      this.currentState = GAME_STATES.Paused;
+      transitionToState(this, GAME_STATES.Paused, { reason: 'toggle_pause' });
       return;
     }
 
     if (this.currentState === GAME_STATES.Paused) {
-      this.currentState = GAME_STATES.Game;
+      transitionToState(this, GAME_STATES.Game, { reason: 'toggle_resume' });
     }
   }
 
@@ -270,20 +272,31 @@ export class Game implements GameHost {
   handleBackPress(): boolean {
     switch (this.currentState) {
       case GAME_STATES.Game:
-        this.currentState = GAME_STATES.Paused;
+        transitionToState(this, GAME_STATES.Paused, {
+          reason: 'native_back_pause',
+        });
         return true;
       case GAME_STATES.Paused:
-        this.currentState = GAME_STATES.Splash;
+        transitionToState(this, GAME_STATES.Splash, {
+          reason: 'native_back_to_splash',
+          lockStartForMs: 450,
+        });
         this.score = 0;
         this.pipes.reset();
         this.layoutUi();
         return true;
       case GAME_STATES.Records:
       case GAME_STATES.Settings:
-        this.currentState = GAME_STATES.Splash;
+        transitionToState(this, GAME_STATES.Splash, {
+          reason: 'native_back_overlay_to_splash',
+          lockStartForMs: 450,
+        });
         return true;
       case GAME_STATES.Score:
-        this.currentState = GAME_STATES.Splash;
+        transitionToState(this, GAME_STATES.Splash, {
+          reason: 'native_back_score_to_splash',
+          lockStartForMs: 450,
+        });
         this.score = 0;
         this.hasSavedCurrentScore = false;
         this.isResolvingLevelTop = false;

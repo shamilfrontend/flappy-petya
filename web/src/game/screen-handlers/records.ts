@@ -3,6 +3,7 @@ import { saveSelectedRecordsLevel } from '../../lib/storage';
 import { DIFFICULTIES } from '../difficulty';
 import type { GameHost } from '../game-host';
 import { GAME_STATES } from '../states';
+import { transitionToState } from '../state-transition';
 
 export function handleRecordsPress(host: GameHost, evt: PressEvent): void {
   const point = getCanvasPoint(host.canvas, evt, host.viewport);
@@ -11,7 +12,10 @@ export function handleRecordsPress(host: GameHost, evt: PressEvent): void {
   }
 
   if (isPointInRect(point, host.backBtn)) {
-    host.currentState = GAME_STATES.Splash;
+    transitionToState(host, GAME_STATES.Splash, {
+      reason: 'close_records',
+      lockStartForMs: 450,
+    });
     return;
   }
 

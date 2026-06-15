@@ -55,6 +55,7 @@ export interface GameHost {
   deathAnimTimer: number;
   shakeTimer: number;
   shakeIntensity: number;
+  nextStartAllowedAtMs: number;
 
   okBtn: ButtonRect;
   recordsBtn: ButtonRect;

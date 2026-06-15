@@ -10,7 +10,11 @@ export default defineConfig({
   publicDir: 'public',
   plugins: [
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
+      minify: false,
       includeAssets: [
         'favicon.ico',
         'favicon.svg',
@@ -22,18 +26,9 @@ export default defineConfig({
         'site.webmanifest',
       ],
       manifest: false,
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,webp,svg,webmanifest}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/(firestore|identitytoolkit|securetoken)\.googleapis\.com\//,
-            handler: 'NetworkOnly',
-          },
-          {
-            urlPattern: /^https:\/\/.*\.firebaseapp\.com\//,
-            handler: 'NetworkOnly',
-          },
-        ],
+      injectManifest: {
+        // Снижаем риск падения terser-хука при сборке SW.
+        minify: false,
       },
     }),
   ],

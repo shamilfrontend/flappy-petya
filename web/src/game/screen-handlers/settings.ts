@@ -1,6 +1,7 @@
 import { getCanvasPoint, isPointInRect, type PressEvent } from '../../input/pointer';
 import type { GameHost } from '../game-host';
 import { GAME_STATES } from '../states';
+import { transitionToState } from '../state-transition';
 
 export function handleSettingsPress(host: GameHost, evt: PressEvent): void {
   const point = getCanvasPoint(host.canvas, evt, host.viewport);
@@ -9,7 +10,10 @@ export function handleSettingsPress(host: GameHost, evt: PressEvent): void {
   }
 
   if (isPointInRect(point, host.backBtn)) {
-    host.currentState = GAME_STATES.Splash;
+    transitionToState(host, GAME_STATES.Splash, {
+      reason: 'close_settings',
+      lockStartForMs: 450,
+    });
     return;
   }
 

@@ -15,8 +15,29 @@ import {
 } from './config';
 import type { GameHost } from './game-host';
 import { GAME_STATES } from './states';
+import { transitionToState } from './state-transition';
+
+const START_REENTRY_LOCK_MS = 450;
 
 export async function startGameWithAuth(host: GameHost): Promise<void> {
+  const now = performance.now();
+  if (host.currentState !== GAME_STATES.Splash) {
+    console.warn('[game-start] Blocked start outside splash', {
+      state: host.currentState,
+      reason: 'state_guard',
+    });
+    return;
+  }
+
+  if (now < host.nextStartAllowedAtMs) {
+    console.warn('[game-start] Blocked rapid re-entry', {
+      now,
+      nextAllowedAt: host.nextStartAllowedAtMs,
+      reason: 'reentry_lock',
+    });
+    return;
+  }
+
   let name = getSavedPlayerName();
   if (!name) {
     const result = await host.nameInputOverlay.prompt();
@@ -43,7 +64,7 @@ export async function openRecordsScreen(host: GameHost): Promise<void> {
     host.lastScoredLevel ?? host.selectedDifficulty;
   host.recordsRefreshLevel = null;
   host.layoutUi();
-  host.currentState = GAME_STATES.Records;
+  transitionToState(host, GAME_STATES.Records, { reason: 'open_records' });
 }
 
 export async function beginGame(host: GameHost, name: string): Promise<void> {
@@ -75,7 +96,10 @@ export async function beginGame(host: GameHost, name: string): Promise<void> {
   host.isNewBest = false;
   host.scoreUiTimer = 0;
   host.layoutUi();
-  host.currentState = GAME_STATES.Countdown;
+  transitionToState(host, GAME_STATES.Countdown, {
+    reason: 'begin_game',
+    lockStartForMs: START_REENTRY_LOCK_MS,
+  });
   host.countdownStep = 0;
   host.countdownTimer = 0;
   host.particles.clear();
@@ -85,7 +109,7 @@ export async function beginGame(host: GameHost, name: string): Promise<void> {
 }
 
 export function startActiveGame(host: GameHost): void {
-  host.currentState = GAME_STATES.Game;
+  transitionToState(host, GAME_STATES.Game, { reason: 'countdown_done' });
   host.countdownStep = -1;
   host.countdownTimer = 0;
   host.goose.jump();
@@ -95,7 +119,7 @@ export function startActiveGame(host: GameHost): void {
 }
 
 export function triggerDeath(host: GameHost): void {
-  host.currentState = GAME_STATES.Score;
+  transitionToState(host, GAME_STATES.Score, { reason: 'collision_or_ground' });
   host.deathAnimTimer = DEATH_ANIM_DURATION;
   host.scoreUiTimer = 0;
   host.shakeTimer = SHAKE_DURATION;

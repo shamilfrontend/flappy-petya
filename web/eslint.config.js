@@ -36,6 +36,15 @@ export default [
     },
   },
   {
+    files: ['src/sw.ts'],
+    rules: {
+      'no-restricted-globals': 'off',
+      'no-underscore-dangle': 'off',
+      '@typescript-eslint/naming-convention': 'off',
+      '@typescript-eslint/dot-notation': 'off',
+    },
+  },
+  {
     ignores: [
       'dist/**',
       'node_modules/**',
