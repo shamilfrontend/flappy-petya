@@ -80,18 +80,27 @@ export async function startGameSession(
   uid: string,
   level: DifficultyLevel,
 ): Promise<void> {
+  const ref = sessionDocRef(db, uid);
+  const snapshot = await getDoc(ref);
   const startedAtMs = Date.now();
 
-  await setDoc(
-    sessionDocRef(db, uid),
-    {
-      level,
-      status: 'active',
-      startedAt: serverTimestamp(),
-      completedAt: null,
-    },
-    { merge: true },
-  );
+  if (snapshot.exists() && snapshot.data().status === 'active') {
+    await setDoc(
+      ref,
+      {
+        status: 'completed',
+        completedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }
+
+  await setDoc(ref, {
+    level,
+    status: 'active',
+    startedAt: serverTimestamp(),
+    completedAt: null,
+  });
 
   setCachedSession(level, 'active', startedAtMs);
 }

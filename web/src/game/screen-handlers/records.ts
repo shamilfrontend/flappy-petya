@@ -1,5 +1,5 @@
 import { getCanvasPoint, isPointInRect, type PressEvent } from '../../input/pointer';
-import { refreshLeaderboard } from '../../lib/storage';
+import { saveSelectedRecordsLevel } from '../../lib/storage';
 import { DIFFICULTIES } from '../difficulty';
 import type { GameHost } from '../game-host';
 import { GAME_STATES } from '../states';
@@ -20,7 +20,11 @@ export function handleRecordsPress(host: GameHost, evt: PressEvent): void {
   );
 
   if (tabIndex >= 0) {
-    host.recordsLevelTab = DIFFICULTIES[tabIndex].id;
-    void refreshLeaderboard(host.recordsLevelTab);
+    const level = DIFFICULTIES[tabIndex].id;
+    if (host.recordsLevelTab !== level) {
+      host.recordsLevelTab = level;
+      host.recordsUiTimer = 0;
+      saveSelectedRecordsLevel(level);
+    }
   }
 }

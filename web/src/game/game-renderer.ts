@@ -1,4 +1,9 @@
+import { drawAtmosphere } from '../graphics/atmosphere';
+import { drawBackground } from '../graphics/background';
+import { drawCelestial } from '../graphics/celestial';
 import { drawGround, drawSky } from '../graphics/environment';
+import { getNightFactor, getPalette } from '../graphics/theme';
+import { drawScreenTransition } from '../graphics/transition';
 import {
   getCountdownY,
   getRecordsLayout,
@@ -11,6 +16,7 @@ import {
   drawButton,
   drawCountdown,
   drawGameOverImage,
+  drawNewBestSubtitle,
   drawPauseButton,
   drawPauseOverlay,
   drawPlayerNameButton,
@@ -30,7 +36,12 @@ import {
   isLeaderboardLoading,
 } from '../lib/storage';
 import { getScreenShakeOffset } from '../lib/screen-shake';
-import { COUNTDOWN_STEP_DURATION } from './config';
+import {
+  COUNTDOWN_STEP_DURATION,
+  SCORE_PULSE_DURATION,
+  SCORE_UI_ANIM_DURATION,
+  TRANSITION_DURATION,
+} from './config';
 import { DIFFICULTIES } from './difficulty';
 import type { GameHost } from './game-host';
 import { getMedal } from './medals';
@@ -61,18 +72,27 @@ export function renderGame(host: GameHost): void {
   const recordsLayout = getRecordsLayout(logicalHeight);
   const settingsLayout = getSettingsLayout(logicalHeight);
 
-  drawSky(ctx, logicalWidth, logicalHeight);
-  host.pipes.draw(ctx);
+  const palette = getPalette(host.score);
+  const nightFactor = getNightFactor(host.score);
+
+  drawSky(ctx, logicalWidth, logicalHeight, palette);
+  drawCelestial(ctx, logicalWidth, logicalHeight, host.frames, nightFactor, palette);
+  drawBackground(ctx, logicalWidth, logicalHeight, host.frames, host.frames, palette);
+  drawAtmosphere(ctx, logicalWidth, logicalHeight, host.frames, nightFactor);
+  host.pipes.draw(ctx, palette);
 
   if (
     host.currentState !== GAME_STATES.Splash
     && host.currentState !== GAME_STATES.Records
     && host.currentState !== GAME_STATES.Settings
   ) {
+    host.gooseTrail.draw(ctx);
     host.goose.draw(ctx, sprites);
   }
 
-  drawGround(ctx, logicalWidth, logicalHeight, host.fgpos);
+  host.particles.draw(ctx);
+
+  drawGround(ctx, logicalWidth, logicalHeight, host.fgpos, palette);
 
   if (host.currentState === GAME_STATES.Splash) {
     drawTitleWithLogo(
@@ -99,7 +119,13 @@ export function renderGame(host: GameHost): void {
       );
     });
 
-    drawButton(ctx, host.getPlayButtonLabel(), host.playBtn, true);
+    drawButton(
+      ctx,
+      host.getPlayButtonLabel(),
+      host.playBtn,
+      true,
+      0.5 + 0.5 * Math.sin(host.frames / 12),
+    );
     drawRecordsTab(ctx, RECORDS_BUTTON_LABEL, host.recordsBtn, false);
     drawRecordsTab(ctx, SETTINGS_BUTTON_LABEL, host.settingsBtn, false);
 
@@ -144,6 +170,11 @@ export function renderGame(host: GameHost): void {
   }
 
   if (host.currentState === GAME_STATES.Records) {
+    const recordsEntrance = Math.max(
+      0,
+      Math.min(1, host.recordsUiTimer / SCORE_UI_ANIM_DURATION),
+    );
+
     drawTitle(ctx, 'Рекорды', centerX, recordsLayout.titleY);
 
     DIFFICULTIES.forEach((difficulty, index) => {
@@ -170,17 +201,13 @@ export function renderGame(host: GameHost): void {
       isLoading,
       host.playerName,
       isSyncing,
+      recordsEntrance,
+      host.frames,
     );
-    drawButton(ctx, BACK_BUTTON_LABEL, host.backBtn);
+    drawButton(ctx, BACK_BUTTON_LABEL, host.backBtn, false, 0, recordsEntrance);
   }
 
   if (host.currentState === GAME_STATES.Score && host.deathAnimTimer <= 0) {
-    drawSubtitle(
-      ctx,
-      host.isNewBest ? 'Новый рекорд!' : 'Игра окончена',
-      centerX,
-      scoreLayout.subtitleY,
-    );
     drawGameOverImage(
       ctx,
       host.gameOverImg,
@@ -188,23 +215,67 @@ export function renderGame(host: GameHost): void {
       scoreLayout.imageY,
       scoreLayout.imageHeight,
     );
-    drawScorePanel(
-      ctx,
-      host.score,
-      host.personalBest,
-      centerX,
-      scoreLayout.panelY,
-      { medal: getMedal(host.score) },
-    );
-    drawButton(ctx, RETRY_BUTTON_LABEL, host.okBtn);
+
+    if (host.hasSavedCurrentScore) {
+      const subtitleEntrance = Math.max(
+        0,
+        Math.min(1, host.scoreUiTimer / SCORE_UI_ANIM_DURATION),
+      );
+
+      if (host.isNewBest) {
+        drawNewBestSubtitle(ctx, centerX, scoreLayout.subtitleY, host.scoreUiTimer);
+      } else {
+        ctx.save();
+        ctx.globalAlpha = subtitleEntrance * subtitleEntrance;
+        drawSubtitle(
+          ctx,
+          'Игра окончена',
+          centerX,
+          scoreLayout.subtitleY,
+        );
+        ctx.restore();
+      }
+      drawScorePanel(
+        ctx,
+        host.score,
+        host.personalBest,
+        centerX,
+        scoreLayout.panelY,
+        { medal: getMedal(host.score), uiTimer: host.scoreUiTimer },
+      );
+      const retryDelay = 6;
+      const retryEntrance = Math.max(
+        0,
+        Math.min(1, (host.scoreUiTimer - retryDelay) / SCORE_UI_ANIM_DURATION),
+      );
+      drawButton(ctx, RETRY_BUTTON_LABEL, host.okBtn, false, 0, retryEntrance);
+    } else {
+      drawSubtitle(
+        ctx,
+        host.isResolvingLevelTop ? 'Загрузка...' : 'Игра окончена',
+        centerX,
+        scoreLayout.subtitleY,
+      );
+    }
   } else if (host.currentState === GAME_STATES.Game) {
     const badgeY = getScoreBadgeY(logicalHeight);
-    drawScoreBadge(ctx, host.score, centerX, badgeY);
+    const pulse = host.scorePulseTimer / SCORE_PULSE_DURATION;
+    drawScoreBadge(ctx, host.score, centerX, badgeY, pulse);
     drawPauseButton(ctx, host.pauseBtn);
   } else if (host.currentState === GAME_STATES.Paused) {
     drawScoreBadge(ctx, host.score, centerX, getScoreBadgeY(logicalHeight));
     drawPauseButton(ctx, host.pauseBtn);
     drawPauseOverlay(ctx, logicalWidth, logicalHeight, centerX, logicalHeight * 0.5);
+  }
+
+  if (host.transitionTimer > 0) {
+    drawScreenTransition(
+      ctx,
+      logicalWidth,
+      logicalHeight,
+      host.transitionTimer / TRANSITION_DURATION,
+      palette.skyTop,
+    );
   }
 
   ctx.restore();

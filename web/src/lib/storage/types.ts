@@ -10,6 +10,7 @@ export interface PlayerProfile {
   name: string;
   bests: Record<DifficultyLevel, number>;
   selectedDifficulty?: DifficultyLevel;
+  selectedRecordsLevel?: DifficultyLevel;
 }
 
 export interface LeaderboardEntry {

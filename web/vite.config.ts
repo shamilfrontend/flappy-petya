@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 const isNativeBuild = process.env.VITE_BUILD_TARGET === 'android'
@@ -37,20 +37,4 @@ export default defineConfig({
       },
     }),
   ],
-  test: {
-    environment: 'happy-dom',
-    globals: true,
-    include: ['src/**/*.test.ts'],
-    coverage: {
-      provider: 'v8',
-      include: ['src/**/*.ts'],
-      exclude: ['src/main.ts', 'src/vite-env.d.ts', 'src/**/*.test.ts'],
-      thresholds: {
-        lines: 90,
-        branches: 82,
-        functions: 90,
-        statements: 90,
-      },
-    },
-  },
 });

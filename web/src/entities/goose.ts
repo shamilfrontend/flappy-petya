@@ -101,17 +101,23 @@ export class Goose {
       this.frame = 1;
       this.rotation = Math.min(Math.PI / 2, this.rotation + 0.3 * dt);
     } else {
-      this.rotation = -0.3;
+      const target = -0.3;
+      this.rotation += (target - this.rotation) * Math.min(1, 0.25 * dt);
     }
   }
 
   draw(ctx: CanvasRenderingContext2D, sprites: Sprites): void {
+    const frameIndex = this.animation[this.frame];
+    const sprite = sprites.goose[frameIndex];
+
     ctx.save();
+
     ctx.translate(this.x, this.y);
     ctx.rotate(this.rotation);
 
-    const frameIndex = this.animation[this.frame];
-    const sprite = sprites.goose[frameIndex];
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 2;
     sprite.draw(ctx, -sprite.width / 2, -sprite.height / 2 + 6);
 
     ctx.restore();

@@ -24,3 +24,9 @@ export const MEDAL_LABELS: Record<MedalType, string> = {
   [MEDAL_TYPES.Silver]: 'Серебро',
   [MEDAL_TYPES.Gold]: 'Золото',
 };
+
+export const MEDAL_COLORS: Record<Exclude<MedalType, 'none'>, string> = {
+  [MEDAL_TYPES.Bronze]: '#CD7F32',
+  [MEDAL_TYPES.Silver]: '#C0C0C0',
+  [MEDAL_TYPES.Gold]: '#FFD700',
+};

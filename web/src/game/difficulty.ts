@@ -25,23 +25,23 @@ export const DIFFICULTIES: DifficultySettings[] = [
   {
     id: DIFFICULTY_LEVELS.Easy,
     label: 'Легкий',
-    pipeGap: 140,
-    pipeSpeed: PIPE_SPEED / 1.5,
-    fgScrollSpeed: FG_SCROLL_SPEED / 1.5,
+    pipeGap: 145,
+    pipeSpeed: PIPE_SPEED * 0.74,
+    fgScrollSpeed: FG_SCROLL_SPEED * 0.74,
   },
   {
     id: DIFFICULTY_LEVELS.Medium,
     label: 'Средний',
-    pipeGap: 110,
-    pipeSpeed: PIPE_SPEED / 1.5,
-    fgScrollSpeed: FG_SCROLL_SPEED / 1.5,
+    pipeGap: 122,
+    pipeSpeed: PIPE_SPEED * 0.84,
+    fgScrollSpeed: FG_SCROLL_SPEED * 0.84,
   },
   {
     id: DIFFICULTY_LEVELS.Hard,
     label: 'Сложный',
-    pipeGap: PIPE_GAP,
-    pipeSpeed: PIPE_SPEED,
-    fgScrollSpeed: FG_SCROLL_SPEED,
+    pipeGap: PIPE_GAP - 4,
+    pipeSpeed: PIPE_SPEED * 0.96,
+    fgScrollSpeed: FG_SCROLL_SPEED * 0.96,
   },
 ];
 

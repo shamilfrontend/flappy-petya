@@ -1,4 +1,5 @@
-import { MEDAL_LABELS, MEDAL_TYPES, type MedalType } from '../game/medals';
+import { MEDAL_COLORS, MEDAL_LABELS, MEDAL_TYPES, type MedalType } from '../game/medals';
+import { SCORE_UI_ANIM_DURATION } from '../game/config';
 import { THEME } from './theme';
 import { TOP_RECORDS_PER_LEVEL, type GameRecord } from '../lib/records';
 
@@ -40,6 +41,61 @@ function drawOutlinedText(
   ctx.strokeText(text, x, y);
   ctx.fillText(text, x, y);
   ctx.restore();
+}
+
+function shade(color: string, amount: number): string {
+  if (!color.startsWith('#')) {
+    return color;
+  }
+  const hex = color.slice(1);
+  const clamp = (v: number): number => Math.max(0, Math.min(255, Math.round(v)));
+  const r = clamp(parseInt(hex.slice(0, 2), 16) + amount);
+  const g = clamp(parseInt(hex.slice(2, 4), 16) + amount);
+  const b = clamp(parseInt(hex.slice(4, 6), 16) + amount);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+interface PanelStyle {
+  topColor: string;
+  bottomColor: string;
+  border?: string;
+  lineWidth?: number;
+  shadow?: boolean;
+}
+
+/** Рисует скруглённую панель с мягкой тенью и вертикальным градиентом. */
+function fillRoundedPanel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+  style: PanelStyle,
+): void {
+  ctx.save();
+  if (style.shadow !== false) {
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 4;
+  }
+
+  const gradient = ctx.createLinearGradient(0, y, 0, y + h);
+  gradient.addColorStop(0, style.topColor);
+  gradient.addColorStop(1, style.bottomColor);
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radius);
+  ctx.fill();
+  ctx.restore();
+
+  if (style.border) {
+    ctx.strokeStyle = style.border;
+    ctx.lineWidth = style.lineWidth ?? 3;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, radius);
+    ctx.stroke();
+  }
 }
 
 const TITLE_FONT = 'bold 28px "Arial Rounded MT Bold", system-ui, sans-serif';
@@ -170,6 +226,40 @@ export function drawSubtitle(
   });
 }
 
+/** Анимированный заголовок «Новый рекорд!» с золотым свечением и искрами. */
+export function drawNewBestSubtitle(
+  ctx: CanvasRenderingContext2D,
+  centerX: number,
+  y: number,
+  uiTimer: number,
+): void {
+  const entrance = Math.min(1, uiTimer / 15);
+  const pulse = 1 + 0.07 * Math.sin(uiTimer / 6);
+  const scale = (0.75 + 0.25 * entrance) * pulse;
+
+  ctx.save();
+  ctx.translate(centerX, y);
+  ctx.scale(scale, scale);
+
+  for (let i = 0; i < 10; i++) {
+    const angle = (i / 10) * Math.PI * 2 + uiTimer * 0.1;
+    const dist = 52 + 8 * Math.sin(uiTimer / 5 + i);
+    const alpha = (0.35 + 0.35 * Math.sin(uiTimer / 4 + i)) * entrance;
+    ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(Math.cos(angle) * dist, Math.sin(angle) * dist, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawOutlinedText(ctx, 'Новый рекорд!', 0, 0, {
+    font: 'bold 24px "Arial Rounded MT Bold", system-ui, sans-serif',
+    fill: '#FFD700',
+    strokeWidth: 5,
+  });
+
+  ctx.restore();
+}
+
 export function drawHint(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -188,19 +278,35 @@ export function drawScoreBadge(
   score: number,
   centerX: number,
   y: number,
+  pulse = 0,
 ): void {
   const text = score.toString();
+  const scale = 1 + pulse * 0.18;
+  const glowStrength = Math.max(0, Math.min(1, pulse));
+
   ctx.save();
+  ctx.translate(centerX, y);
+  ctx.scale(scale, scale);
+  ctx.translate(-centerX, -y);
   ctx.font = 'bold 32px system-ui, sans-serif';
   const textWidth = ctx.measureText(text).width;
   const padX = 14;
   const boxW = textWidth + padX * 2;
   const boxH = 40;
 
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
-  ctx.beginPath();
-  ctx.roundRect(centerX - boxW / 2, y - boxH / 2, boxW, boxH, 8);
-  ctx.fill();
+  if (glowStrength > 0.01) {
+    // Короткий золотистый акцент при +1, чтобы счёт читался выразительнее.
+    ctx.shadowColor = `rgba(255, 224, 102, ${0.45 * glowStrength})`;
+    ctx.shadowBlur = 8 + glowStrength * 10;
+    ctx.shadowOffsetY = 0;
+  }
+
+  fillRoundedPanel(ctx, centerX - boxW / 2, y - boxH / 2, boxW, boxH, boxH / 2, {
+    topColor: 'rgba(0, 0, 0, 0.28)',
+    bottomColor: 'rgba(0, 0, 0, 0.12)',
+    border: 'rgba(255, 255, 255, 0.35)',
+    lineWidth: 1.5,
+  });
 
   drawOutlinedText(ctx, text, centerX, y, {
     font: 'bold 32px system-ui, sans-serif',
@@ -231,6 +337,77 @@ export function drawGameOverImage(
 
 export interface ScorePanelOptions {
   medal?: MedalType;
+  uiTimer?: number;
+}
+
+function drawMedalIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  medal: Exclude<MedalType, 'none'>,
+  uiTimer: number,
+): void {
+  const entrance = Math.min(1, uiTimer / 18);
+  const scale = 0.4 + 0.6 * entrance;
+  const shimmer = 0.75 + 0.25 * Math.sin(uiTimer / 7);
+  const color = MEDAL_COLORS[medal];
+  const radius = 14;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8 * shimmer;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = THEME.outline;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = `rgba(255, 255, 255, ${0.35 * shimmer})`;
+  ctx.beginPath();
+  ctx.ellipse(-4, -5, 5, 3, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (medal === MEDAL_TYPES.Gold) {
+    drawGoldMedalStarTrail(ctx, uiTimer, entrance);
+  }
+
+  ctx.restore();
+}
+
+/** Звёздный след вокруг золотой медали. */
+function drawGoldMedalStarTrail(
+  ctx: CanvasRenderingContext2D,
+  uiTimer: number,
+  entrance: number,
+): void {
+  const starCount = 8;
+
+  for (let trail = 0; trail < 4; trail++) {
+    const trailFade = 1 - trail * 0.22;
+
+    for (let i = 0; i < starCount; i++) {
+      const angle = (i / starCount) * Math.PI * 2 + (uiTimer - trail * 4) * 0.12;
+      const dist = 20 + trail * 5 + 4 * Math.sin(uiTimer / 6 + i);
+      const alpha = trailFade * (0.45 + 0.55 * Math.sin(uiTimer / 5 + i * 0.9)) * entrance;
+      const size = 2.4 - trail * 0.35;
+
+      ctx.fillStyle = `rgba(255, 230, 100, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(
+        Math.cos(angle) * dist,
+        Math.sin(angle) * dist,
+        size,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fill();
+    }
+  }
 }
 
 export function drawScorePanel(
@@ -247,14 +424,23 @@ export function drawScorePanel(
   const panelH = hasMedal ? 118 : 90;
   const panelX = centerX - panelW / 2;
   const panelY = y - panelH / 2;
+  const uiTimer = options.uiTimer ?? 0;
+  const entrance = Math.max(0, Math.min(1, uiTimer / SCORE_UI_ANIM_DURATION));
+  const easedEntrance = entrance * entrance;
+  const scale = 0.92 + easedEntrance * 0.08;
 
-  ctx.fillStyle = THEME.panel;
-  ctx.strokeStyle = THEME.panelBorder;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.roundRect(panelX, panelY, panelW, panelH, 10);
-  ctx.fill();
-  ctx.stroke();
+  ctx.save();
+  ctx.translate(centerX, y);
+  ctx.scale(scale, scale);
+  ctx.translate(-centerX, -y);
+  ctx.globalAlpha = easedEntrance;
+
+  fillRoundedPanel(ctx, panelX, panelY, panelW, panelH, 10, {
+    topColor: '#FFFFFF',
+    bottomColor: THEME.panel,
+    border: THEME.panelBorder,
+    lineWidth: 3,
+  });
 
   const labelFont = '14px system-ui, sans-serif';
   const valueFont = 'bold 22px system-ui, sans-serif';
@@ -262,7 +448,6 @@ export function drawScorePanel(
   const row2Y = panelY + 62;
   const row3Y = panelY + 94;
 
-  ctx.save();
   ctx.font = labelFont;
   ctx.fillStyle = THEME.outline;
   ctx.textAlign = 'left';
@@ -281,6 +466,8 @@ export function drawScorePanel(
 
   if (hasMedal) {
     ctx.font = 'bold 18px system-ui, sans-serif';
+    const medalX = panelX + panelW - 52;
+    drawMedalIcon(ctx, medalX, row3Y, medal, uiTimer);
     ctx.fillText(MEDAL_LABELS[medal], panelX + panelW - 20, row3Y);
   }
 
@@ -316,13 +503,12 @@ export function drawSettingsPanel(
   const panelX = centerX - panelW / 2;
   const panelH = rowCount * 44;
 
-  ctx.fillStyle = THEME.panel;
-  ctx.strokeStyle = THEME.panelBorder;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.roundRect(panelX, startY, panelW, panelH, 10);
-  ctx.fill();
-  ctx.stroke();
+  fillRoundedPanel(ctx, panelX, startY, panelW, panelH, 10, {
+    topColor: '#FFFFFF',
+    bottomColor: THEME.panel,
+    border: THEME.panelBorder,
+    lineWidth: 3,
+  });
 }
 
 export function drawSettingsToggleRow(
@@ -467,14 +653,34 @@ export function drawButton(
   label: string,
   rect: ButtonRect,
   isSelected = false,
+  pulse = 0,
+  entrance = 1,
 ): void {
-  ctx.fillStyle = isSelected ? THEME.accent : THEME.panel;
-  ctx.strokeStyle = isSelected ? THEME.outline : THEME.panelBorder;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.roundRect(rect.x, rect.y, rect.width, rect.height, 8);
-  ctx.fill();
-  ctx.stroke();
+  const clampedEntrance = Math.max(0, Math.min(1, entrance));
+  const easedEntrance = clampedEntrance * clampedEntrance;
+  const entranceScale = 0.94 + easedEntrance * 0.06;
+
+  ctx.save();
+  const cx = rect.x + rect.width / 2;
+  const cy = rect.y + rect.height / 2;
+  ctx.translate(cx, cy);
+  ctx.scale(entranceScale, entranceScale);
+  ctx.translate(-cx, -cy);
+  ctx.globalAlpha = easedEntrance;
+
+  if (pulse > 0) {
+    const scale = 1 + pulse * 0.06;
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.translate(-cx, -cy);
+  }
+
+  fillRoundedPanel(ctx, rect.x, rect.y, rect.width, rect.height, 8, {
+    topColor: isSelected ? shade(THEME.accent, 28) : '#FFFFFF',
+    bottomColor: isSelected ? THEME.accent : THEME.panel,
+    border: isSelected ? THEME.outline : THEME.panelBorder,
+    lineWidth: 2,
+  });
 
   drawOutlinedText(
     ctx,
@@ -487,6 +693,7 @@ export function drawButton(
       strokeWidth: 2,
     },
   );
+  ctx.restore();
 }
 
 function drawUserIcon(
@@ -582,6 +789,24 @@ const RECORDS_PANEL_MIN_WIDTH = 200;
 const RECORDS_PANEL_PADDING = 12;
 const RECORDS_TAB_HEIGHT = 36;
 const RECORDS_TAB_GAP = 6;
+const RECORDS_RANK_SLOT = 20;
+const TOP_RANK_STYLES = [
+  {
+    nameColor: '#8A6B00',
+    scoreColor: '#6F5500',
+    rowFill: 'rgba(255, 215, 0, 0.14)',
+  },
+  {
+    nameColor: '#5C6472',
+    scoreColor: '#494F5A',
+    rowFill: 'rgba(192, 198, 210, 0.16)',
+  },
+  {
+    nameColor: '#7A4E2D',
+    scoreColor: '#633E24',
+    rowFill: 'rgba(205, 127, 50, 0.14)',
+  },
+] as const;
 
 export function getRecordsPanelWidth(viewportWidth: number): number {
   return Math.max(
@@ -663,7 +888,11 @@ export function drawRecordsTable(
   isLoading = false,
   highlightName = '',
   isSyncing = false,
+  entrance = 1,
+  frames = 0,
 ): void {
+  const clampedEntrance = Math.max(0, Math.min(1, entrance));
+  const easedEntrance = clampedEntrance * clampedEntrance;
   const panelW = getRecordsPanelWidth(viewportWidth);
   const panelX = centerX - panelW / 2;
   const headerHeight = 32;
@@ -673,6 +902,15 @@ export function drawRecordsTable(
   const visibleRecords = records.slice(0, TOP_RECORDS_PER_LEVEL);
   const rowCount = Math.max(visibleRecords.length, 1);
   const panelH = headerHeight + rowCount * RECORDS_ROW_HEIGHT;
+  const panelCenterX = panelX + panelW / 2;
+  const panelCenterY = startY + panelH / 2;
+  const entranceScale = 0.94 + easedEntrance * 0.06;
+
+  ctx.save();
+  ctx.translate(panelCenterX, panelCenterY);
+  ctx.scale(entranceScale, entranceScale);
+  ctx.translate(-panelCenterX, -panelCenterY);
+  ctx.globalAlpha = easedEntrance;
 
   ctx.fillStyle = THEME.panel;
   ctx.strokeStyle = THEME.panelBorder;
@@ -685,7 +923,8 @@ export function drawRecordsTable(
   const innerPad = 12;
   const colNameX = panelX + innerPad;
   const colScoreX = panelX + panelW - innerPad;
-  const nameMaxWidth = panelW * 0.68;
+  const nameTextX = colNameX + RECORDS_RANK_SLOT;
+  const nameMaxWidth = panelW * 0.68 - RECORDS_RANK_SLOT;
   const headerY = startY + headerHeight / 2;
 
   ctx.save();
@@ -693,7 +932,7 @@ export function drawRecordsTable(
   ctx.fillStyle = THEME.outline;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  ctx.fillText('Игрок', colNameX, headerY);
+  ctx.fillText('Игрок', nameTextX, headerY);
   ctx.textAlign = 'right';
   ctx.fillText('Очки', colScoreX, headerY);
 
@@ -714,6 +953,7 @@ export function drawRecordsTable(
       startY + headerHeight + RECORDS_ROW_HEIGHT / 2,
     );
     ctx.restore();
+    ctx.restore();
     return;
   }
 
@@ -723,6 +963,7 @@ export function drawRecordsTable(
     const rowTop = startY + headerHeight + index * RECORDS_ROW_HEIGHT;
     const rowY = rowTop + RECORDS_ROW_HEIGHT / 2;
     const isHighlighted = trimmedHighlight.length > 0 && record.name === trimmedHighlight;
+    const rankStyle = TOP_RANK_STYLES[index];
 
     if (isHighlighted) {
       ctx.fillStyle = THEME.accent;
@@ -737,12 +978,59 @@ export function drawRecordsTable(
       );
       ctx.fill();
       ctx.globalAlpha = 1;
+    } else if (rankStyle) {
+      ctx.fillStyle = rankStyle.rowFill;
+      ctx.beginPath();
+      ctx.roundRect(
+        panelX + innerPad / 2,
+        rowTop + 2,
+        panelW - innerPad,
+        RECORDS_ROW_HEIGHT - 4,
+        6,
+      );
+      ctx.fill();
     }
 
-    ctx.fillStyle = THEME.outline;
-    ctx.font = isHighlighted ? `bold ${rowFont}` : rowFont;
+    const nameColor = isHighlighted
+      ? THEME.outline
+      : (rankStyle?.nameColor ?? THEME.outline);
+    const scoreColor = isHighlighted
+      ? THEME.outline
+      : (rankStyle?.scoreColor ?? THEME.outline);
+    const isTopRank = Boolean(rankStyle);
+
+    if (rankStyle) {
+      const rankCenterX = colNameX + RECORDS_RANK_SLOT / 2;
+      const isGoldRank = index === 0;
+      const pulse = isGoldRank ? 0.5 + 0.5 * Math.sin(frames / 12) : 0;
+      const rankRadius = isGoldRank ? 7 + pulse * 0.8 : 7;
+
+      if (isGoldRank) {
+        ctx.shadowColor = 'rgba(255, 215, 0, 0.4)';
+        ctx.shadowBlur = 4 + pulse * 2;
+      }
+
+      ctx.fillStyle = rankStyle.rowFill;
+      ctx.strokeStyle = rankStyle.nameColor;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(rankCenterX, rowY, rankRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = rankStyle.nameColor;
+      ctx.font = `bold ${Math.max(fontSize - 1, 11)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText((index + 1).toString(), rankCenterX, rowY);
+    }
+
+    ctx.fillStyle = nameColor;
+    ctx.font = isHighlighted || isTopRank ? `bold ${rowFont}` : rowFont;
     ctx.textAlign = 'left';
-    ctx.fillText(truncateText(ctx, record.name, nameMaxWidth), colNameX, rowY);
+    ctx.fillText(truncateText(ctx, record.name, nameMaxWidth), nameTextX, rowY);
+
+    ctx.fillStyle = scoreColor;
+    ctx.font = isTopRank ? `bold ${rowFont}` : rowFont;
     ctx.textAlign = 'right';
     ctx.fillText(record.score.toString(), colScoreX, rowY);
   });
@@ -760,5 +1048,6 @@ export function drawRecordsTable(
     ctx.globalAlpha = 1;
   }
 
+  ctx.restore();
   ctx.restore();
 }

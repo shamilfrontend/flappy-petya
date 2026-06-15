@@ -4,16 +4,20 @@ import {
   GROUND_HEIGHT,
   OBSTACLE_BODY_HEIGHT,
   OBSTACLE_WIDTH,
+  PIPE_DIFFICULTY_RAMP_SCORE,
   PIPE_GAP,
+  PIPE_MAX_SPEED_BOOST,
   PIPE_SPAWN_INTERVAL,
   PIPE_SPAWN_MARGIN,
   PIPE_SPAWN_OFFSET_MIN,
   PIPE_SPAWN_OFFSET_RANGE,
   PIPE_SPEED,
   PIPE_START_DELAY,
+  PIPE_VARIANT_COUNT,
 } from '../game/config';
 import type { DifficultySettings } from '../game/difficulty';
 import { drawObstacle } from '../graphics/environment';
+import type { Palette } from '../graphics/theme';
 import type { Goose } from './goose';
 
 export interface Pipe {
@@ -22,6 +26,7 @@ export interface Pipe {
   width: number;
   height: number;
   passed: boolean;
+  variant: number;
 }
 
 /** Доля компенсации широкого экрана: 0 — как раньше, 1 — как на базовой ширине. */
@@ -52,11 +57,13 @@ export class Pipes {
   private pipes: Pipe[] = [];
   private pipeGap = PIPE_GAP;
   private pipeSpeed = PIPE_SPEED;
+  private basePipeSpeed = PIPE_SPEED;
   private spawnFrames = 0;
 
   setDifficulty(settings: DifficultySettings): void {
     this.pipeGap = settings.pipeGap;
     this.pipeSpeed = settings.pipeSpeed;
+    this.basePipeSpeed = settings.pipeSpeed;
   }
 
   reset(): void {
@@ -98,10 +105,14 @@ export class Pipes {
     width: number,
     height: number,
     goose: Goose,
+    score: number,
     dt: number,
     onCollision: () => void,
     onScore: () => void,
   ): void {
+    const speedScale = this.getDifficultySpeedScale(score);
+    this.pipeSpeed = this.basePipeSpeed * speedScale;
+
     const previousSpawnFrames = this.spawnFrames;
     this.spawnFrames += dt;
 
@@ -160,7 +171,14 @@ export class Pipes {
       width: OBSTACLE_WIDTH,
       height: OBSTACLE_BODY_HEIGHT,
       passed: false,
+      variant: Math.floor(Math.random() * PIPE_VARIANT_COUNT),
     };
+  }
+
+  private getDifficultySpeedScale(score: number): number {
+    const clampedScore = Math.max(0, score);
+    const rampProgress = Math.min(1, clampedScore / PIPE_DIFFICULTY_RAMP_SCORE);
+    return 1 + PIPE_MAX_SPEED_BOOST * rampProgress;
   }
 
   private checkCollision(goose: Goose, pipe: Pipe): boolean {
@@ -187,15 +205,17 @@ export class Pipes {
     return r > d1 || r > d2;
   }
 
-  draw(ctx: CanvasRenderingContext2D): void {
+  draw(ctx: CanvasRenderingContext2D, palette?: Palette): void {
     for (const pipe of this.pipes) {
-      drawObstacle(ctx, pipe.x, pipe.y, pipe.height, true);
+      drawObstacle(ctx, pipe.x, pipe.y, pipe.height, true, palette, pipe.variant);
       drawObstacle(
         ctx,
         pipe.x,
         pipe.y + this.pipeGap + pipe.height,
         pipe.height,
         false,
+        palette,
+        pipe.variant,
       );
     }
   }

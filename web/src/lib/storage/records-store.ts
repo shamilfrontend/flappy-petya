@@ -3,15 +3,18 @@ import {
   doc,
   getDoc,
   getDocs,
+  getDocsFromServer,
   limit,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   type Firestore,
+  type QuerySnapshot,
 } from 'firebase/firestore';
 import type { DifficultyLevel } from '../../game/difficulty';
 import {
+  createEmptyBests,
   deduplicateLeaderboardByName,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
@@ -28,20 +31,43 @@ function leaderboardDoc(db: Firestore, level: DifficultyLevel, uid: string) {
   return doc(db, 'leaderboard', level, 'scores', uid);
 }
 
-export async function fetchLeaderboard(
+export async function fetchPlayerLeaderboardScore(
   db: Firestore,
+  uid: string,
   level: DifficultyLevel,
-  maxEntries = TOP_RECORDS_PER_LEVEL,
-): Promise<GameRecord[]> {
-  const fetchLimit = Math.max(maxEntries * LEADERBOARD_FETCH_BUFFER, maxEntries);
-  const snapshot = await getDocs(
-    query(
-      leaderboardCollection(db, level),
-      orderBy('score', 'desc'),
-      limit(fetchLimit),
-    ),
+): Promise<number> {
+  const snapshot = await getDoc(leaderboardDoc(db, level, uid));
+
+  if (!snapshot.exists()) {
+    return 0;
+  }
+
+  const score = Number(snapshot.data().score);
+
+  return Number.isFinite(score) && score > 0 ? score : 0;
+}
+
+export async function fetchPlayerLeaderboardScores(
+  db: Firestore,
+  uid: string,
+): Promise<Record<DifficultyLevel, number>> {
+  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
+  const bests = createEmptyBests();
+
+  await Promise.all(
+    levels.map(async (level) => {
+      bests[level] = await fetchPlayerLeaderboardScore(db, uid, level);
+    }),
   );
 
+  return bests;
+}
+
+function mapLeaderboardSnapshot(
+  snapshot: QuerySnapshot,
+  level: DifficultyLevel,
+  maxEntries: number,
+): GameRecord[] {
   const records = snapshot.docs
     .map((item) => {
       const data = item.data() as Partial<LeaderboardEntry>;
@@ -58,6 +84,28 @@ export async function fetchLeaderboard(
     .filter((record): record is GameRecord => Boolean(record?.name));
 
   return deduplicateLeaderboardByName(records, maxEntries);
+}
+
+export async function fetchLeaderboard(
+  db: Firestore,
+  level: DifficultyLevel,
+  maxEntries = TOP_RECORDS_PER_LEVEL,
+): Promise<GameRecord[]> {
+  const fetchLimit = Math.max(maxEntries * LEADERBOARD_FETCH_BUFFER, maxEntries);
+  const leaderboardQuery = query(
+    leaderboardCollection(db, level),
+    orderBy('score', 'desc'),
+    limit(fetchLimit),
+  );
+
+  try {
+    const snapshot = await getDocsFromServer(leaderboardQuery);
+    return mapLeaderboardSnapshot(snapshot, level, maxEntries);
+  } catch (error) {
+    console.warn('Leaderboard server fetch failed, falling back to cache', error);
+    const snapshot = await getDocs(leaderboardQuery);
+    return mapLeaderboardSnapshot(snapshot, level, maxEntries);
+  }
 }
 
 export async function upsertLeaderboardEntry(

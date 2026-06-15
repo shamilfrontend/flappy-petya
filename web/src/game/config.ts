@@ -36,3 +36,17 @@ export const SHAKE_INTENSITY = 4;
 export const RESIZE_DEBOUNCE_MS = 100;
 export const COUNTDOWN_STEP_DURATION = 45;
 export const COUNTDOWN_STEPS = 4;
+export const TRANSITION_DURATION = 12;
+export const SCORE_PULSE_DURATION = 20;
+export const SCORE_UI_ANIM_DURATION = 18;
+export const PIPE_VARIANT_COUNT = 5;
+
+/**
+ * Плавная прогрессия: к этому счёту скорость труб достигает максимального буста.
+ */
+export const PIPE_DIFFICULTY_RAMP_SCORE = 25;
+
+/**
+ * Максимальный буст скорости труб в забеге (например 0.22 = +22%).
+ */
+export const PIPE_MAX_SPEED_BOOST = 0.22;

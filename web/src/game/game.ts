@@ -2,11 +2,13 @@ import { getSoundManager, SOUND_EVENTS } from '../audio/sound';
 import { getHapticManager, HAPTIC_EVENTS } from '../input/haptic';
 import { Goose } from '../entities/goose';
 import { Pipes } from '../entities/pipes';
+import { GooseTrail } from '../graphics/goose-trail';
+import { ParticleSystem } from '../graphics/particles';
 import { initSprites, type Sprites } from '../graphics/sprites';
 import { loadImageWithFallback } from '../lib/load-image-with-fallback';
 import {
-  getPersonalBest,
   getSavedPlayerName,
+  getSelectedRecordsLevel,
   getSelectedDifficulty,
   initStorage,
   saveSelectedDifficulty,
@@ -60,21 +62,31 @@ export class Game implements GameHost {
 
   readonly goose = new Goose();
   readonly pipes = new Pipes();
+  readonly particles = new ParticleSystem();
+  readonly gooseTrail = new GooseTrail();
   readonly sound = getSoundManager();
   readonly haptic = getHapticManager();
   readonly messageOverlay = new MessageOverlay();
   readonly nameInputOverlay = new NameInputOverlay();
 
   currentState: GameState = GAME_STATES.Splash;
+  previousState: GameState = GAME_STATES.Splash;
+  transitionTimer = 0;
+  scorePulseTimer = 0;
+  scoreUiTimer = 0;
+  recordsUiTimer = 0;
   fgpos = 0;
   frames = 0;
   gameFrames = 0;
   score = 0;
   playerName = getSavedPlayerName();
   personalBest = 0;
+  levelTopScore = 0;
+  isResolvingLevelTop = false;
   isAwaitingAuth = false;
   selectedDifficulty: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
   recordsLevelTab: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
+  recordsRefreshLevel: DifficultyLevel | null = null;
   countdownStep = -1;
   countdownTimer = 0;
   isNewBest = false;
@@ -199,12 +211,10 @@ export class Game implements GameHost {
       this.applyDifficulty(this.selectedDifficulty, false);
     }
 
-    if (this.playerName) {
-      this.personalBest = getPersonalBest(
-        this.playerName,
-        this.selectedDifficulty,
-      );
-    }
+    const savedRecordsLevel = getSelectedRecordsLevel();
+    this.recordsLevelTab = savedRecordsLevel ?? this.selectedDifficulty;
+
+    this.personalBest = 0;
   }
 
   applyDifficulty(level: DifficultyLevel, persist = true): void {
@@ -212,6 +222,7 @@ export class Game implements GameHost {
     this.selectedDifficulty = level;
     this.fgScrollSpeed = settings.fgScrollSpeed;
     this.pipes.setDifficulty(settings);
+    this.personalBest = 0;
 
     if (persist) {
       saveSelectedDifficulty(level);
@@ -220,6 +231,7 @@ export class Game implements GameHost {
 
   performJump(): void {
     this.goose.jump();
+    this.particles.emitFlap(this.goose.x, this.goose.y);
     this.sound.play(SOUND_EVENTS.Jump);
     this.haptic.pulse(HAPTIC_EVENTS.Jump);
   }
@@ -274,6 +286,7 @@ export class Game implements GameHost {
         this.currentState = GAME_STATES.Splash;
         this.score = 0;
         this.hasSavedCurrentScore = false;
+        this.isResolvingLevelTop = false;
         this.pipes.reset();
         this.layoutUi();
         return true;

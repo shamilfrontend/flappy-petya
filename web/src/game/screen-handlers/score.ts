@@ -12,6 +12,7 @@ export function handleScorePress(host: GameHost, evt: PressEvent): void {
   host.currentState = GAME_STATES.Splash;
   host.score = 0;
   host.hasSavedCurrentScore = false;
+  host.isResolvingLevelTop = false;
   host.deathAnimTimer = 0;
   host.shakeTimer = 0;
   host.layoutUi();

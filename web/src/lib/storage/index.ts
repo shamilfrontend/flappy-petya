@@ -1,3 +1,4 @@
+import type { Firestore } from 'firebase/firestore';
 import type { DifficultyLevel } from '../../game/difficulty';
 import {
   getFirestoreDb,
@@ -23,7 +24,14 @@ import {
   setLeaderboardCacheLoading,
   setStorageCacheReady,
 } from './cache';
-import { getLocalPlayerName, saveLocalPlayerName } from './local';
+import {
+  getLocalPlayerName,
+  getLocalSelectedDifficulty,
+  getLocalSelectedRecordsLevel,
+  saveLocalPlayerName,
+  saveLocalSelectedDifficulty,
+  saveLocalSelectedRecordsLevel,
+} from './local';
 import { migrateLocalDataToFirestore } from './migrate';
 import {
   fetchPlayerProfile,
@@ -33,6 +41,7 @@ import {
 } from './player-store';
 import {
   fetchLeaderboard,
+  fetchPlayerLeaderboardScore,
   updateLeaderboardName,
   upsertLeaderboardEntry,
 } from './records-store';
@@ -49,6 +58,7 @@ import {
 } from './session-store';
 import {
   createDefaultProfile,
+  createEmptyBests,
   deduplicateLeaderboardByName,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
@@ -72,7 +82,18 @@ let currentUid: string | null = null;
 let queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let queueRetryAttempt = 0;
 let isRecoveringAuthSession = false;
+let leaderboardLoadingCount = 0;
 const ONLINE_HANDLER_KEY = '__flappyPetyaStorageOnlineHandler';
+
+function beginLeaderboardLoading(): void {
+  leaderboardLoadingCount += 1;
+  setLeaderboardCacheLoading(true);
+}
+
+function endLeaderboardLoading(): void {
+  leaderboardLoadingCount = Math.max(0, leaderboardLoadingCount - 1);
+  setLeaderboardCacheLoading(leaderboardLoadingCount > 0);
+}
 
 function resetStorageCache(): void {
   setCacheProfile(createDefaultProfile());
@@ -182,30 +203,77 @@ async function processQueue(): Promise<void> {
   }
 }
 
+function mergeProfileBestsWithOwnScores(
+  profile: PlayerProfile,
+  ownScores: Partial<Record<DifficultyLevel, number>>,
+): PlayerProfile {
+  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
+  const bests = { ...profile.bests };
+
+  levels.forEach((level) => {
+    bests[level] = Math.max(bests[level], ownScores[level] ?? 0);
+  });
+
+  return {
+    ...profile,
+    bests,
+  };
+}
+
+function hasHigherBests(
+  nextProfile: PlayerProfile,
+  previousProfile: PlayerProfile,
+): boolean {
+  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
+
+  return levels.some(
+    (level) => nextProfile.bests[level] > previousProfile.bests[level],
+  );
+}
+
+async function reconcileProfileWithOwnLeaderboardScores(
+  db: Firestore,
+  uid: string,
+  profile: PlayerProfile,
+  levels: DifficultyLevel[] = ['easy', 'medium', 'hard'],
+): Promise<PlayerProfile> {
+  const ownScores = { ...createEmptyBests() };
+
+  await Promise.all(
+    levels.map(async (level) => {
+      ownScores[level] = await fetchPlayerLeaderboardScore(db, uid, level);
+    }),
+  );
+
+  const reconciled = mergeProfileBestsWithOwnScores(profile, ownScores);
+
+  if (hasHigherBests(reconciled, profile)) {
+    enqueueTask(async () => {
+      await savePlayerProfile(db, uid, reconciled);
+    });
+  }
+
+  return reconciled;
+}
+
+const LEADERBOARD_FETCH_ATTEMPTS = 3;
+const LEADERBOARD_FETCH_RETRY_MS = 400;
+
 async function loadAllLeaderboards(): Promise<void> {
   const db = getFirestoreDb();
   if (!db) {
     return;
   }
 
-  setLeaderboardCacheLoading(true);
+  beginLeaderboardLoading();
 
   try {
     const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
-    const results = await Promise.all(
-      levels.map(async (level) => ({
-        level,
-        records: await fetchLeaderboard(db, level),
-      })),
-    );
-
-    results.forEach(({ level, records }) => {
-      syncLeaderboardCache(level, records);
-    });
+    await Promise.all(levels.map((level) => fetchAndCacheLeaderboard(level)));
   } catch (error) {
     console.error('Failed to load leaderboards', error);
   } finally {
-    setLeaderboardCacheLoading(false);
+    endLeaderboardLoading();
   }
 }
 
@@ -258,6 +326,32 @@ async function loadStorageForUser(uid: string): Promise<void> {
       saveLocalPlayerName(profile.name);
     }
 
+    const localSelectedDifficulty = getLocalSelectedDifficulty();
+    const localSelectedRecordsLevel = getLocalSelectedRecordsLevel();
+
+    if (localSelectedDifficulty && !profile.selectedDifficulty) {
+      profile = {
+        ...profile,
+        selectedDifficulty: localSelectedDifficulty,
+      };
+    }
+
+    if (localSelectedRecordsLevel && !profile.selectedRecordsLevel) {
+      profile = {
+        ...profile,
+        selectedRecordsLevel: localSelectedRecordsLevel,
+      };
+    }
+
+    if (profile.selectedDifficulty) {
+      saveLocalSelectedDifficulty(profile.selectedDifficulty);
+    }
+
+    if (profile.selectedRecordsLevel) {
+      saveLocalSelectedRecordsLevel(profile.selectedRecordsLevel);
+    }
+
+    profile = await reconcileProfileWithOwnLeaderboardScores(db, uid, profile);
     setCacheProfile(profile);
     await loadAllLeaderboards();
     void processQueue();
@@ -277,13 +371,21 @@ async function loadStorageForUser(uid: string): Promise<void> {
 
 function hydrateProfileFromLocalStorage(): void {
   const localName = getLocalPlayerName();
-  if (!localName) {
+  const localSelectedDifficulty = getLocalSelectedDifficulty();
+  const localSelectedRecordsLevel = getLocalSelectedRecordsLevel();
+
+  if (!localName && !localSelectedDifficulty && !localSelectedRecordsLevel) {
     return;
   }
 
+  const currentProfile = getCacheProfile();
   setCacheProfile({
-    ...getCacheProfile(),
-    name: localName,
+    ...currentProfile,
+    name: localName || currentProfile.name,
+    selectedDifficulty:
+      localSelectedDifficulty ?? currentProfile.selectedDifficulty,
+    selectedRecordsLevel:
+      localSelectedRecordsLevel ?? currentProfile.selectedRecordsLevel,
   });
 }
 
@@ -322,6 +424,25 @@ export function isStorageReady(): boolean {
   return isStorageCacheReady();
 }
 
+export async function waitForStorageReady(
+  timeoutMs = 10000,
+): Promise<void> {
+  if (isStorageCacheReady()) {
+    return;
+  }
+
+  const startedAt = Date.now();
+
+  await new Promise<void>((resolve) => {
+    const timer = setInterval(() => {
+      if (isStorageCacheReady() || Date.now() - startedAt >= timeoutMs) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 50);
+  });
+}
+
 export function isLeaderboardLoading(): boolean {
   return isLeaderboardCacheLoading();
 }
@@ -336,6 +457,10 @@ export function getSavedPlayerName(): string {
 
 export function getSelectedDifficulty(): DifficultyLevel | undefined {
   return getCacheProfile().selectedDifficulty;
+}
+
+export function getSelectedRecordsLevel(): DifficultyLevel | undefined {
+  return getCacheProfile().selectedRecordsLevel;
 }
 
 export function savePlayerName(name: string): void {
@@ -382,6 +507,31 @@ export function saveSelectedDifficulty(level: DifficultyLevel): void {
   };
 
   setCacheProfile(profile);
+  saveLocalSelectedDifficulty(level);
+
+  const uid = currentUid ?? getCurrentUid();
+  if (!uid || !isFirebaseEnabled()) {
+    return;
+  }
+
+  enqueueTask(async () => {
+    const db = getFirestoreDb();
+    if (!db) {
+      return;
+    }
+
+    await savePlayerProfile(db, uid, profile);
+  });
+}
+
+export function saveSelectedRecordsLevel(level: DifficultyLevel): void {
+  const profile: PlayerProfile = {
+    ...getCacheProfile(),
+    selectedRecordsLevel: level,
+  };
+
+  setCacheProfile(profile);
+  saveLocalSelectedRecordsLevel(level);
 
   const uid = currentUid ?? getCurrentUid();
   if (!uid || !isFirebaseEnabled()) {
@@ -420,8 +570,7 @@ export function getPersonalBest(
     return getCacheProfile().bests[level] ?? 0;
   }
 
-  const leaderboard = getCacheLeaderboard(level) ?? [];
-  const record = leaderboard.find(
+  const record = (getCacheLeaderboard(level) ?? []).find(
     (item) => item.name === trimmedName && item.level === level,
   );
 
@@ -429,12 +578,13 @@ export function getPersonalBest(
 }
 
 function getProfileLeaderboardRecords(profile: PlayerProfile): GameRecord[] {
-  const trimmedName = profile.name.trim();
+  const trimmedName = profile.name.trim() || getSavedPlayerName().trim();
   if (!trimmedName) {
     return [];
   }
 
   const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
+
   return levels
     .filter((item) => profile.bests[item] > 0)
     .map((item) => ({
@@ -442,6 +592,94 @@ function getProfileLeaderboardRecords(profile: PlayerProfile): GameRecord[] {
       level: item,
       score: profile.bests[item],
     }));
+}
+
+function mergeTopRecords(
+  level: DifficultyLevel,
+  ...sources: GameRecord[][]
+): GameRecord[] {
+  const combined = sources
+    .flat()
+    .filter((record) => record.level === level);
+
+  return deduplicateLeaderboardByName(combined);
+}
+
+const inflightLeaderboardFetches = new Map<
+  DifficultyLevel,
+  Promise<GameRecord[]>
+>();
+
+function applyLeaderboardCache(
+  level: DifficultyLevel,
+  records: GameRecord[],
+): GameRecord[] {
+  const previousRecords = getCacheLeaderboard(level);
+
+  if (records.length === 0) {
+    return previousRecords ?? [];
+  }
+
+  setCacheLeaderboard(level, records);
+
+  return records;
+}
+
+async function fetchAndCacheLeaderboard(
+  level: DifficultyLevel,
+): Promise<GameRecord[]> {
+  if (!isFirebaseEnabled()) {
+    return getCacheLeaderboard(level) ?? [];
+  }
+
+  const inflight = inflightLeaderboardFetches.get(level);
+  if (inflight) {
+    return inflight;
+  }
+
+  const promise = (async () => {
+    await waitForAuthReady();
+
+    const db = getFirestoreDb();
+    if (!db) {
+      throw new Error('Firestore is not initialized');
+    }
+
+    for (let attempt = 0; attempt < LEADERBOARD_FETCH_ATTEMPTS; attempt += 1) {
+      const records = await fetchLeaderboard(db, level);
+      const cachedRecords = applyLeaderboardCache(level, records);
+
+      if (cachedRecords.length > 0) {
+        return cachedRecords;
+      }
+
+      if (attempt < LEADERBOARD_FETCH_ATTEMPTS - 1) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, LEADERBOARD_FETCH_RETRY_MS * (attempt + 1));
+        });
+      }
+    }
+
+    return getCacheLeaderboard(level) ?? [];
+  })();
+
+  inflightLeaderboardFetches.set(level, promise);
+
+  try {
+    return await promise;
+  } finally {
+    if (inflightLeaderboardFetches.get(level) === promise) {
+      inflightLeaderboardFetches.delete(level);
+    }
+  }
+}
+
+export async function resolveLevelTopScore(
+  level: DifficultyLevel,
+): Promise<number> {
+  const records = await fetchAndCacheLeaderboard(level);
+
+  return records[0]?.score ?? 0;
 }
 
 export interface PrepareGameSessionResult {
@@ -468,7 +706,6 @@ export async function prepareGameSession(
 
   try {
     await startGameSession(db, uid, level);
-    return { ok: true };
   } catch (error) {
     console.error('Failed to start game session', error);
     if (isFirestorePermissionError(error)) {
@@ -483,31 +720,27 @@ export async function prepareGameSession(
       errorMessage: 'Не удалось начать игровую сессию. Попробуйте позже.',
     };
   }
-}
 
-function mergeTopRecords(
-  level: DifficultyLevel,
-  ...sources: GameRecord[][]
-): GameRecord[] {
-  const combined = sources
-    .flat()
-    .filter((record) => record.level === level);
+  try {
+    const profile = getCacheProfile();
+    const reconciled = await reconcileProfileWithOwnLeaderboardScores(
+      db,
+      uid,
+      profile,
+      [level],
+    );
+    setCacheProfile(reconciled);
+  } catch (error) {
+    console.error('Failed to reconcile profile bests before game', error);
+  }
 
-  return deduplicateLeaderboardByName(combined);
-}
+  try {
+    await refreshLeaderboard(level);
+  } catch (error) {
+    console.error('Failed to refresh leaderboard before game', error);
+  }
 
-function syncLeaderboardCache(
-  level: DifficultyLevel,
-  remoteRecords: GameRecord[],
-): void {
-  setCacheLeaderboard(
-    level,
-    mergeTopRecords(
-      level,
-      remoteRecords,
-      getProfileLeaderboardRecords(getCacheProfile()),
-    ),
-  );
+  return { ok: true };
 }
 
 function ensureCurrentPlayerVisible(
@@ -564,12 +797,10 @@ export function getTopRecordsByLevel(
   const sources: GameRecord[][] = [
     getProfileLeaderboardRecords(getCacheProfile()),
   ];
+  const leaderboard = getCacheLeaderboard(level);
 
-  if (isFirebaseEnabled()) {
-    const leaderboard = getCacheLeaderboard(level);
-    if (leaderboard !== undefined) {
-      sources.unshift(leaderboard);
-    }
+  if (leaderboard !== undefined) {
+    sources.unshift(leaderboard);
   }
 
   const merged = mergeTopRecords(level, ...sources);
@@ -610,6 +841,8 @@ export function saveRecord(
   const profileName = profile.name.trim();
   const isCurrentPlayer =
     profileName === trimmedName || profileName.length === 0;
+  const previousBest = getPersonalBest(trimmedName, level);
+  const isImprovedScore = score > previousBest;
 
   if (isCurrentPlayer) {
     setCacheProfile({
@@ -632,56 +865,60 @@ export function saveRecord(
       return;
     }
 
-    const currentProfile = getCacheProfile();
-    const profileForSave = currentProfile.name === trimmedName
-      ? currentProfile
-      : { ...currentProfile, name: trimmedName };
+    if (isImprovedScore) {
+      const currentProfile = getCacheProfile();
+      const profileForSave = currentProfile.name === trimmedName
+        ? currentProfile
+        : { ...currentProfile, name: trimmedName };
 
-    await upsertLeaderboardEntry(
-      db,
-      uid,
-      level,
-      trimmedName,
-      score,
-      gameFrames,
-    );
+      await upsertLeaderboardEntry(
+        db,
+        uid,
+        level,
+        trimmedName,
+        score,
+        gameFrames,
+      );
 
-    const updatedProfile = await updatePlayerBest(
-      db,
-      uid,
-      level,
-      score,
-      profileForSave,
-    );
-    setCacheProfile(updatedProfile);
+      const updatedProfile = await updatePlayerBest(
+        db,
+        uid,
+        level,
+        score,
+        profileForSave,
+      );
+      setCacheProfile(updatedProfile);
+
+      const records = await fetchLeaderboard(db, level);
+      applyLeaderboardCache(level, records);
+    }
 
     await completeGameSession(db, uid);
-
-    const records = await fetchLeaderboard(db, level);
-    syncLeaderboardCache(level, records);
   });
 }
 
-export async function refreshLeaderboard(level: DifficultyLevel): Promise<void> {
+export async function refreshLeaderboard(
+  level: DifficultyLevel,
+): Promise<GameRecord[]> {
   if (!isFirebaseEnabled()) {
-    return;
+    return getTopRecordsByLevel(level);
   }
 
-  const db = getFirestoreDb();
   const uid = currentUid ?? getCurrentUid();
-  if (!db || !uid) {
-    return;
+  if (!uid) {
+    return getTopRecordsByLevel(level);
   }
 
-  setLeaderboardCacheLoading(true);
+  beginLeaderboardLoading();
 
   try {
-    const records = await fetchLeaderboard(db, level);
-    syncLeaderboardCache(level, records);
+    await fetchAndCacheLeaderboard(level);
     void processQueue();
   } catch (error) {
     console.error('Failed to refresh leaderboard', error);
   } finally {
-    setLeaderboardCacheLoading(false);
+    endLeaderboardLoading();
   }
+
+  return getTopRecordsByLevel(level);
 }

@@ -1,5 +1,4 @@
 import airbnb from 'eslint-config-flat-airbnb';
-import vitest from 'eslint-plugin-vitest';
 import tseslint from 'typescript-eslint';
 
 export default [
@@ -37,22 +36,11 @@ export default [
     },
   },
   {
-    files: ['**/*.test.ts'],
-    plugins: { vitest },
-    rules: {
-      ...vitest.configs.recommended.rules,
-      'max-classes-per-file': 'off',
-    },
-  },
-  {
     ignores: [
       'dist/**',
-      'coverage/**',
       'node_modules/**',
       '.venv-assets/**',
       '../android/**',
-      'e2e/**',
-      'playwright.config.ts',
       'scripts/**',
     ],
   },

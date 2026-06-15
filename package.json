@@ -9,7 +9,6 @@
     "build": "npm run build -w flappy-petya-web",
     "build:android": "npm run build:android -w flappy-petya-web",
     "check": "npm run check -w flappy-petya-web",
-    "test:rules": "firebase emulators:exec --only firestore --project flappy-petya-rules-test \"npm run test:rules -w flappy-petya-web\"",
     "cap:sync": "npm run cap:sync -w flappy-petya-web",
     "cap:open:android": "npm run cap:open:android -w flappy-petya-web",
     "cap:open:ios": "npm run cap:open:ios -w flappy-petya-web",

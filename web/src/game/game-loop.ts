@@ -18,6 +18,8 @@ export class GameLoop {
   private lastFrameTime = 0;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private isRunning = false;
+  private isPausedByVisibility = false;
   private readonly frameCallbacks: GameLoopFrameCallbacks;
   private readonly resizeCallbacks: GameLoopResizeCallbacks;
 
@@ -29,25 +31,38 @@ export class GameLoop {
     this.resizeCallbacks = resizeCallbacks;
   }
 
-  start(): void {
-    const loop = (timestamp: number): void => {
-      if (this.lastFrameTime === 0) {
-        this.lastFrameTime = timestamp;
-      }
+  private readonly frameTick = (timestamp: number): void => {
+    if (!this.isRunning) {
+      return;
+    }
 
-      const deltaMs = timestamp - this.lastFrameTime;
+    if (this.lastFrameTime === 0) {
       this.lastFrameTime = timestamp;
-      const dt = Math.min(deltaMs / MS_PER_FRAME, MAX_FRAME_DELTA);
+    }
 
-      this.frameCallbacks.update(dt);
-      this.frameCallbacks.render();
-      this.rafId = requestAnimationFrame(loop);
-    };
+    const deltaMs = timestamp - this.lastFrameTime;
+    this.lastFrameTime = timestamp;
+    const dt = Math.min(deltaMs / MS_PER_FRAME, MAX_FRAME_DELTA);
 
-    this.rafId = requestAnimationFrame(loop);
+    this.frameCallbacks.update(dt);
+    this.frameCallbacks.render();
+    this.rafId = requestAnimationFrame(this.frameTick);
+  };
+
+  start(): void {
+    if (this.isRunning && this.rafId !== null) {
+      return;
+    }
+
+    this.isRunning = true;
+    this.isPausedByVisibility = false;
+    this.rafId = requestAnimationFrame(this.frameTick);
   }
 
   stop(): void {
+    this.isRunning = false;
+    this.isPausedByVisibility = false;
+
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -97,8 +112,23 @@ export class GameLoop {
   }
 
   private readonly onVisibilityChange = (): void => {
-    if (document.visibilityState === 'visible') {
+    if (document.visibilityState === 'hidden' && this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+      this.isPausedByVisibility = this.isRunning;
       this.resetFrameTime();
+      return;
+    }
+
+    if (
+      document.visibilityState === 'visible'
+      && this.isRunning
+      && this.isPausedByVisibility
+      && this.rafId === null
+    ) {
+      this.resetFrameTime();
+      this.isPausedByVisibility = false;
+      this.rafId = requestAnimationFrame(this.frameTick);
     }
   };
 

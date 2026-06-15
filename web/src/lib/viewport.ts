@@ -1,5 +1,6 @@
 export const BASE_WIDTH = 320;
 export const BASE_HEIGHT = 480;
+const MAX_DEVICE_PIXEL_RATIO = 2;
 
 export interface ViewportState {
   cssWidth: number;
@@ -27,7 +28,7 @@ export function getViewportState(
 ): ViewportState {
   const cssWidth = Math.max(1, Math.round(width));
   const cssHeight = Math.max(1, Math.round(height));
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
   const scale = cssHeight / BASE_HEIGHT;
   const logicalWidth = cssWidth / scale;
   const logicalHeight = BASE_HEIGHT;

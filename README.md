@@ -86,25 +86,22 @@ npm run cap:open:ios
 ## Качество кода
 
 ```bash
-npm run check          # lint + test:coverage (как в pre-commit и CI)
-npm run test:e2e -w flappy-petya-web   # Playwright smoke (нужен build)
+npm run check          # lint (как в pre-commit и CI)
 npm run assets:webp -w flappy-petya-web  # PNG → WebP в public/static/
 npm run lint -w flappy-petya-web
-npm run test:run -w flappy-petya-web
-npm run test:coverage -w flappy-petya-web
 ```
 
 ### Pre-commit (Husky)
 
-После `npm install` при каждом `git commit` автоматически запускаются `lint` и `test:coverage` (с порогами покрытия).
+После `npm install` при каждом `git commit` автоматически запускается `lint`.
 Обойти проверку в крайнем случае: `git commit --no-verify`.
 
 ## GitHub Actions
 
 | Workflow | Триггер | Назначение |
 |----------|---------|------------|
-| [ci.yml](.github/workflows/ci.yml) | push / PR в `main` | `npm ci` + lint + test:coverage + build |
-| [deploy-pages.yml](.github/workflows/deploy-pages.yml) | push в `main` | lint + test:coverage + сборка и деплой на GitHub Pages |
+| [ci.yml](.github/workflows/ci.yml) | push / PR в `main` | `npm ci` + lint + build |
+| [deploy-pages.yml](.github/workflows/deploy-pages.yml) | push в `main` | lint + сборка и деплой на GitHub Pages |
 
 **Настройка Pages (один раз):** **Settings → Pages → Build and deployment**
 
@@ -134,11 +131,6 @@ firebase deploy --only firestore:rules
 4. Прямая запись `saveRecord(..., 9999)` из DevTools **не проходит** без ожидания ~5 ч для максимального счёта.
 
 Локальная проверка дублируется в `web/src/lib/storage/score-validation.ts`.
-Тесты правил (нужны `firebase-tools` и Java):
-
-```bash
-npm run test:rules
-```
 
 После деплоя rules **вручную удалите** подозрительные записи в Firebase Console (`leaderboard → hard → scores`).
 

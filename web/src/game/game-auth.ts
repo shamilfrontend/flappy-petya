@@ -1,11 +1,12 @@
 import { SOUND_EVENTS } from '../audio/sound';
 import { HAPTIC_EVENTS } from '../input/haptic';
 import {
-  getPersonalBest,
   getSavedPlayerName,
+  getTopRecordsByLevel,
   prepareGameSession,
-  refreshLeaderboard,
+  resolveLevelTopScore,
   savePlayerName,
+  waitForStorageReady,
 } from '../lib/storage';
 import {
   DEATH_ANIM_DURATION,
@@ -36,11 +37,13 @@ export async function startGameWithAuth(host: GameHost): Promise<void> {
 }
 
 export async function openRecordsScreen(host: GameHost): Promise<void> {
+  await waitForStorageReady();
+
   host.recordsLevelTab =
     host.lastScoredLevel ?? host.selectedDifficulty;
+  host.recordsRefreshLevel = null;
+  host.layoutUi();
   host.currentState = GAME_STATES.Records;
-
-  void refreshLeaderboard(host.recordsLevelTab);
 }
 
 export async function beginGame(host: GameHost, name: string): Promise<void> {
@@ -53,17 +56,30 @@ export async function beginGame(host: GameHost, name: string): Promise<void> {
   }
 
   host.playerName = name;
-  host.personalBest = getPersonalBest(host.playerName, host.selectedDifficulty);
+  host.isResolvingLevelTop = false;
+
+  try {
+    host.levelTopScore = await resolveLevelTopScore(host.selectedDifficulty);
+  } catch (error) {
+    console.error('Failed to resolve level top score at game start', error);
+    host.levelTopScore =
+      getTopRecordsByLevel(host.selectedDifficulty)[0]?.score ?? 0;
+  }
+
+  host.personalBest = host.levelTopScore;
   host.score = 0;
   host.gameFrames = 0;
   host.hasSavedCurrentScore = false;
   host.deathAnimTimer = 0;
   host.shakeTimer = 0;
   host.isNewBest = false;
+  host.scoreUiTimer = 0;
   host.layoutUi();
   host.currentState = GAME_STATES.Countdown;
   host.countdownStep = 0;
   host.countdownTimer = 0;
+  host.particles.clear();
+  host.gooseTrail.clear();
   host.pipes.reset();
   host.pipes.seedInitial(host.viewport.logicalWidth, host.viewport.logicalHeight);
 }
@@ -73,6 +89,7 @@ export function startActiveGame(host: GameHost): void {
   host.countdownStep = -1;
   host.countdownTimer = 0;
   host.goose.jump();
+  host.particles.emitFlap(host.goose.x, host.goose.y);
   host.sound.play(SOUND_EVENTS.Jump);
   host.haptic.pulse(HAPTIC_EVENTS.Jump);
 }
@@ -80,8 +97,10 @@ export function startActiveGame(host: GameHost): void {
 export function triggerDeath(host: GameHost): void {
   host.currentState = GAME_STATES.Score;
   host.deathAnimTimer = DEATH_ANIM_DURATION;
+  host.scoreUiTimer = 0;
   host.shakeTimer = SHAKE_DURATION;
   host.shakeIntensity = SHAKE_INTENSITY;
+  host.particles.emitDeath(host.goose.x, host.goose.y);
   host.sound.play(SOUND_EVENTS.Hit);
   host.haptic.pulse(HAPTIC_EVENTS.Hit);
 }

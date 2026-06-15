@@ -46,6 +46,14 @@ function parseProfile(data: Record<string, unknown>): PlayerProfile {
     profile.selectedDifficulty = data.selectedDifficulty;
   }
 
+  if (
+    data.selectedRecordsLevel === 'easy'
+    || data.selectedRecordsLevel === 'medium'
+    || data.selectedRecordsLevel === 'hard'
+  ) {
+    profile.selectedRecordsLevel = data.selectedRecordsLevel;
+  }
+
   return profile;
 }
 
@@ -72,6 +80,7 @@ export async function savePlayerProfile(
       name: profile.name,
       bests: profile.bests,
       selectedDifficulty: profile.selectedDifficulty ?? null,
+      selectedRecordsLevel: profile.selectedRecordsLevel ?? null,
       updatedAt: serverTimestamp(),
     },
     { merge: true },
