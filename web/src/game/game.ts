@@ -137,6 +137,9 @@ export class Game implements GameHost {
 
     applyCanvasSize(this.canvas, this.ctx, this.viewport);
     document.body.appendChild(this.canvas);
+    if (import.meta.env.DEV) {
+      (window as Window & { flappyPetyaGameDebug?: Game }).flappyPetyaGameDebug = this;
+    }
     this.inputBindings = bindGameInput(this, this.canvas);
 
     this.gameLoop = new GameLoop(

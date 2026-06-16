@@ -41,10 +41,21 @@ export function isPointInRect(
   point: CanvasPoint,
   rect: { x: number; y: number; width: number; height: number },
 ): boolean {
+  if (
+    !Number.isFinite(rect.x)
+    || !Number.isFinite(rect.y)
+    || !Number.isFinite(rect.width)
+    || !Number.isFinite(rect.height)
+    || rect.width <= 0
+    || rect.height <= 0
+  ) {
+    return false;
+  }
+
   return (
-    rect.x < point.x &&
-    point.x < rect.x + rect.width &&
-    rect.y < point.y &&
-    point.y < rect.y + rect.height
+    point.x >= rect.x
+    && point.x <= rect.x + rect.width
+    && point.y >= rect.y
+    && point.y <= rect.y + rect.height
   );
 }

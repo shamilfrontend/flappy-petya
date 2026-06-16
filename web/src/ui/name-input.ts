@@ -70,8 +70,12 @@ export class NameInputOverlay {
     this.errorHint.hidden = true;
     this.submitBtn.textContent = options.submitLabel ?? DEFAULT_SUBMIT_LABEL;
     this.root.hidden = false;
-    this.input.focus();
-    this.input.select();
+    this.root.removeAttribute('hidden');
+    this.root.style.display = 'flex';
+    window.requestAnimationFrame(() => {
+      this.input.focus();
+      this.input.select();
+    });
 
     return new Promise((resolve) => {
       this.resolve = resolve;
@@ -80,6 +84,8 @@ export class NameInputOverlay {
 
   hide(): void {
     this.root.hidden = true;
+    this.root.setAttribute('hidden', '');
+    this.root.style.removeProperty('display');
     this.errorHint.hidden = true;
   }
 

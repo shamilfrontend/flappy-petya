@@ -4,8 +4,6 @@ import type { GameHost } from '../game-host';
 import { GAME_STATES } from '../states';
 import { transitionToState } from '../state-transition';
 
-const SPLASH_START_TOUCH_REENTRY_LOCK_MS = 450;
-
 export function handleSplashPress(host: GameHost, evt: PressEvent): void {
   const point = getCanvasPoint(host.canvas, evt, host.viewport);
   if (!point) {
@@ -23,12 +21,17 @@ export function handleSplashPress(host: GameHost, evt: PressEvent): void {
   }
 
   if (isPointInRect(point, host.playBtn)) {
-    const now = performance.now();
-    if (now < host.nextStartAllowedAtMs) {
+    if (host.playBtn.width <= 0 || host.playBtn.height <= 0) {
+      console.warn('[game-start] Blocked start: invalid play button hitbox', {
+        playBtn: host.playBtn,
+      });
       return;
     }
 
-    host.nextStartAllowedAtMs = now + SPLASH_START_TOUCH_REENTRY_LOCK_MS;
+    if (performance.now() < host.nextStartAllowedAtMs) {
+      return;
+    }
+
     void host.startGame();
     return;
   }

@@ -68,14 +68,8 @@ export function toLogicalPoint(
     return { x: 0, y: 0 };
   }
 
-  const viewport = window.visualViewport;
-  const offsetX = viewport?.offsetLeft ?? 0;
-  const offsetY = viewport?.offsetTop ?? 0;
-  const x = clientX - offsetX;
-  const y = clientY - offsetY;
-
   return {
-    x: ((x - rect.left) / rect.width) * state.logicalWidth,
-    y: ((y - rect.top) / rect.height) * state.logicalHeight,
+    x: ((clientX - rect.left) / rect.width) * state.logicalWidth,
+    y: ((clientY - rect.top) / rect.height) * state.logicalHeight,
   };
 }

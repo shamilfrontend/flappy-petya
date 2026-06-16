@@ -4,8 +4,6 @@ import type { GameHost } from './game-host';
 import { handleScreenPress } from './screen-handlers';
 import { GAME_STATES } from './states';
 
-const SPLASH_START_KEY_REENTRY_LOCK_MS = 450;
-
 export interface GameInputBindings {
   unbindKeyboard: (() => void) | null;
   usesPointerEvents: boolean;
@@ -53,7 +51,6 @@ export function bindGameInput(
         return;
       }
 
-      host.nextStartAllowedAtMs = now + SPLASH_START_KEY_REENTRY_LOCK_MS;
       event.preventDefault();
       void host.startGame();
     }

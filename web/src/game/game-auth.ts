@@ -20,7 +20,6 @@ import { transitionToState } from './state-transition';
 const START_REENTRY_LOCK_MS = 450;
 
 export async function startGameWithAuth(host: GameHost): Promise<void> {
-  const now = performance.now();
   if (host.currentState !== GAME_STATES.Splash) {
     console.warn('[game-start] Blocked start outside splash', {
       state: host.currentState,
@@ -29,32 +28,36 @@ export async function startGameWithAuth(host: GameHost): Promise<void> {
     return;
   }
 
-  if (now < host.nextStartAllowedAtMs) {
-    console.warn('[game-start] Blocked rapid re-entry', {
-      now,
-      nextAllowedAt: host.nextStartAllowedAtMs,
-      reason: 'reentry_lock',
+  if (host.isAwaitingAuth) {
+    console.warn('[game-start] Blocked parallel start', {
+      reason: 'awaiting_auth_guard',
     });
     return;
   }
 
-  let name = getSavedPlayerName();
-  if (!name) {
-    const result = await host.nameInputOverlay.prompt();
-    if (!result.confirmed) {
-      return;
-    }
+  host.isAwaitingAuth = true;
 
-    savePlayerName(result.name);
-    host.syncStateFromStorage();
-    host.layoutUi();
-    name = getSavedPlayerName();
+  try {
+    let name = getSavedPlayerName();
     if (!name) {
-      return;
-    }
-  }
+      const result = await host.nameInputOverlay.prompt();
+      if (!result.confirmed) {
+        return;
+      }
 
-  await beginGame(host, name);
+      savePlayerName(result.name);
+      host.syncStateFromStorage();
+      host.layoutUi();
+      name = getSavedPlayerName();
+      if (!name) {
+        return;
+      }
+    }
+
+    await beginGame(host, name);
+  } finally {
+    host.isAwaitingAuth = false;
+  }
 }
 
 export async function openRecordsScreen(host: GameHost): Promise<void> {
