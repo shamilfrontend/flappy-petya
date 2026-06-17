@@ -1,5 +1,15 @@
 import { MAX_VALID_SCORE } from './types';
 
+export const SCORE_VALIDATION_FAILURES = {
+  InvalidScore: 'invalid-score',
+  InvalidGameFrames: 'invalid-game-frames',
+  MinWallClockNotReached: 'min-wall-clock-not-reached',
+} as const;
+
+export type ScoreValidationFailureReason = (
+  typeof SCORE_VALIDATION_FAILURES
+)[keyof typeof SCORE_VALIDATION_FAILURES];
+
 /** Minimum logical game frames required for a given score (generous lower bound). */
 export function minGameFrames(score: number): number {
   if (score <= 0) {
@@ -61,4 +71,25 @@ export function hasMinWallClockElapsed(
   }
 
   return nowMs - sessionStartedAtMs >= minWallClockMs(score);
+}
+
+export function getScoreValidationFailure(
+  score: number,
+  gameFrames: number,
+  sessionStartedAtMs: number,
+  nowMs: number,
+): ScoreValidationFailureReason | null {
+  if (!isValidScoreValue(score)) {
+    return SCORE_VALIDATION_FAILURES.InvalidScore;
+  }
+
+  if (!isValidGameFrames(score, gameFrames)) {
+    return SCORE_VALIDATION_FAILURES.InvalidGameFrames;
+  }
+
+  if (!hasMinWallClockElapsed(sessionStartedAtMs, nowMs, score)) {
+    return SCORE_VALIDATION_FAILURES.MinWallClockNotReached;
+  }
+
+  return null;
 }

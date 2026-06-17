@@ -888,6 +888,8 @@ export function drawRecordsTable(
   isLoading = false,
   highlightName = '',
   isSyncing = false,
+  syncStatusMessage = '',
+  isSyncStatusError = false,
   entrance = 1,
   frames = 0,
 ): void {
@@ -1035,13 +1037,16 @@ export function drawRecordsTable(
     ctx.fillText(record.score.toString(), colScoreX, rowY);
   });
 
-  if (isSyncing) {
+  const statusText = syncStatusMessage.trim() || (
+    isSyncing ? 'Обновление...' : ''
+  );
+  if (statusText) {
     ctx.textAlign = 'center';
     ctx.font = `${Math.max(fontSize - 2, 11)}px system-ui, sans-serif`;
-    ctx.fillStyle = THEME.outline;
-    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = isSyncStatusError ? '#A13A3A' : THEME.outline;
+    ctx.globalAlpha = isSyncStatusError ? 0.9 : 0.7;
     ctx.fillText(
-      'Обновление...',
+      statusText,
       centerX,
       startY + panelH + 14,
     );

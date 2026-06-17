@@ -31,9 +31,11 @@ import {
   drawTitleWithLogo,
 } from '../graphics/ui-text';
 import {
+  getRecordSyncStatus,
   getTopRecordsByLevel,
   isFirebaseSyncPending,
   isLeaderboardLoading,
+  RECORD_SYNC_STATUS,
 } from '../lib/storage';
 import { getScreenShakeOffset } from '../lib/screen-shake';
 import {
@@ -191,6 +193,12 @@ export function renderGame(host: GameHost): void {
     const isSyncing = (
       isFirebaseSyncPending() || isLeaderboardLoading()
     ) && records.length > 0;
+    const syncStatus = getRecordSyncStatus(host.recordsLevelTab);
+    const syncStatusMessage = syncStatus?.message ?? '';
+    const isSyncStatusError = syncStatus?.state === RECORD_SYNC_STATUS.Rejected;
+    const shouldShowSpinner = isSyncing || (
+      syncStatus?.state === RECORD_SYNC_STATUS.Pending
+    );
 
     drawRecordsTable(
       ctx,
@@ -200,7 +208,9 @@ export function renderGame(host: GameHost): void {
       logicalWidth,
       isLoading,
       host.playerName,
-      isSyncing,
+      shouldShowSpinner,
+      syncStatusMessage,
+      isSyncStatusError,
       recordsEntrance,
       host.frames,
     );

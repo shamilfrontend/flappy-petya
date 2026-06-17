@@ -1,4 +1,3 @@
-import type { Firestore } from 'firebase/firestore';
 import type { DifficultyLevel } from '../../game/difficulty';
 import {
   getFirestoreDb,
@@ -36,19 +35,17 @@ import { migrateLocalDataToFirestore } from './migrate';
 import {
   fetchPlayerProfile,
   savePlayerProfile,
-  updatePlayerBest,
   updatePlayerName,
 } from './player-store';
 import {
   fetchLeaderboard,
-  fetchPlayerLeaderboardScore,
   updateLeaderboardName,
   upsertLeaderboardEntry,
 } from './records-store';
 import {
-  hasMinWallClockElapsed,
-  isValidGameFrames,
+  getScoreValidationFailure,
   isValidScoreValue,
+  SCORE_VALIDATION_FAILURES,
 } from './score-validation';
 import {
   clearCachedSession,
@@ -58,8 +55,6 @@ import {
 } from './session-store';
 import {
   createDefaultProfile,
-  createEmptyBests,
-  deduplicateLeaderboardByName,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
   type PlayerProfile,
@@ -73,6 +68,23 @@ export {
 
 type StorageTask = () => Promise<void>;
 
+export const RECORD_SYNC_STATUS = {
+  Idle: 'idle',
+  Pending: 'pending',
+  Synced: 'synced',
+  Rejected: 'rejected',
+} as const;
+
+export type RecordSyncState =
+  typeof RECORD_SYNC_STATUS[keyof typeof RECORD_SYNC_STATUS];
+
+export interface RecordSyncStatus {
+  state: RecordSyncState;
+  level: DifficultyLevel;
+  message: string;
+  updatedAtMs: number;
+}
+
 const QUEUE_RETRY_BASE_MS = 2000;
 const QUEUE_RETRY_MAX_MS = 30000;
 
@@ -84,6 +96,54 @@ let queueRetryAttempt = 0;
 let isRecoveringAuthSession = false;
 let leaderboardLoadingCount = 0;
 const ONLINE_HANDLER_KEY = '__flappyPetyaStorageOnlineHandler';
+const SYNC_STATUS_TTL_MS = 10000;
+let lastRecordSyncStatus: RecordSyncStatus | null = null;
+
+function setRecordSyncStatus(
+  state: RecordSyncState,
+  level: DifficultyLevel,
+  message: string,
+): void {
+  lastRecordSyncStatus = {
+    state,
+    level,
+    message,
+    updatedAtMs: Date.now(),
+  };
+}
+
+function clearRecordSyncStatus(): void {
+  lastRecordSyncStatus = null;
+}
+
+export function getRecordSyncStatus(
+  level: DifficultyLevel,
+): RecordSyncStatus | null {
+  if (!lastRecordSyncStatus || lastRecordSyncStatus.level !== level) {
+    return null;
+  }
+
+  if (Date.now() - lastRecordSyncStatus.updatedAtMs > SYNC_STATUS_TTL_MS) {
+    clearRecordSyncStatus();
+    return null;
+  }
+
+  return lastRecordSyncStatus;
+}
+
+function getScoreValidationMessage(
+  failure: ReturnType<typeof getScoreValidationFailure>,
+): string {
+  if (failure === SCORE_VALIDATION_FAILURES.InvalidGameFrames) {
+    return 'Рекорд не синхронизирован: проверка времени игры не пройдена.';
+  }
+
+  if (failure === SCORE_VALIDATION_FAILURES.MinWallClockNotReached) {
+    return 'Рекорд не синхронизирован: партия завершилась слишком быстро.';
+  }
+
+  return 'Рекорд не синхронизирован: некорректные данные счёта.';
+}
 
 function beginLeaderboardLoading(): void {
   leaderboardLoadingCount += 1;
@@ -98,6 +158,7 @@ function endLeaderboardLoading(): void {
 function resetStorageCache(): void {
   setCacheProfile(createDefaultProfile());
   clearLeaderboardCache();
+  clearRecordSyncStatus();
 }
 
 function clearQueueRetryTimer(): void {
@@ -203,59 +264,6 @@ async function processQueue(): Promise<void> {
   }
 }
 
-function mergeProfileBestsWithOwnScores(
-  profile: PlayerProfile,
-  ownScores: Partial<Record<DifficultyLevel, number>>,
-): PlayerProfile {
-  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
-  const bests = { ...profile.bests };
-
-  levels.forEach((level) => {
-    bests[level] = Math.max(bests[level], ownScores[level] ?? 0);
-  });
-
-  return {
-    ...profile,
-    bests,
-  };
-}
-
-function hasHigherBests(
-  nextProfile: PlayerProfile,
-  previousProfile: PlayerProfile,
-): boolean {
-  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
-
-  return levels.some(
-    (level) => nextProfile.bests[level] > previousProfile.bests[level],
-  );
-}
-
-async function reconcileProfileWithOwnLeaderboardScores(
-  db: Firestore,
-  uid: string,
-  profile: PlayerProfile,
-  levels: DifficultyLevel[] = ['easy', 'medium', 'hard'],
-): Promise<PlayerProfile> {
-  const ownScores = { ...createEmptyBests() };
-
-  await Promise.all(
-    levels.map(async (level) => {
-      ownScores[level] = await fetchPlayerLeaderboardScore(db, uid, level);
-    }),
-  );
-
-  const reconciled = mergeProfileBestsWithOwnScores(profile, ownScores);
-
-  if (hasHigherBests(reconciled, profile)) {
-    enqueueTask(async () => {
-      await savePlayerProfile(db, uid, reconciled);
-    });
-  }
-
-  return reconciled;
-}
-
 const LEADERBOARD_FETCH_ATTEMPTS = 3;
 const LEADERBOARD_FETCH_RETRY_MS = 400;
 
@@ -351,7 +359,6 @@ async function loadStorageForUser(uid: string): Promise<void> {
       saveLocalSelectedRecordsLevel(profile.selectedRecordsLevel);
     }
 
-    profile = await reconcileProfileWithOwnLeaderboardScores(db, uid, profile);
     setCacheProfile(profile);
     await loadAllLeaderboards();
     void processQueue();
@@ -548,26 +555,13 @@ export function saveSelectedRecordsLevel(level: DifficultyLevel): void {
   });
 }
 
-function isCurrentPlayerName(name: string): boolean {
-  const trimmedName = name.trim();
-  const profile = getCacheProfile();
-  const profileName = profile.name.trim();
-  const savedName = getSavedPlayerName().trim();
-
-  return (
-    (profileName.length > 0 && profileName === trimmedName)
-    || (profileName.length === 0 && savedName === trimmedName)
-  );
-}
-
 export function getPersonalBest(
   name: string,
   level: DifficultyLevel,
 ): number {
   const trimmedName = name.trim();
-
-  if (isCurrentPlayerName(trimmedName)) {
-    return getCacheProfile().bests[level] ?? 0;
+  if (!trimmedName) {
+    return 0;
   }
 
   const record = (getCacheLeaderboard(level) ?? []).find(
@@ -575,34 +569,6 @@ export function getPersonalBest(
   );
 
   return record?.score ?? 0;
-}
-
-function getProfileLeaderboardRecords(profile: PlayerProfile): GameRecord[] {
-  const trimmedName = profile.name.trim() || getSavedPlayerName().trim();
-  if (!trimmedName) {
-    return [];
-  }
-
-  const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
-
-  return levels
-    .filter((item) => profile.bests[item] > 0)
-    .map((item) => ({
-      name: trimmedName,
-      level: item,
-      score: profile.bests[item],
-    }));
-}
-
-function mergeTopRecords(
-  level: DifficultyLevel,
-  ...sources: GameRecord[][]
-): GameRecord[] {
-  const combined = sources
-    .flat()
-    .filter((record) => record.level === level);
-
-  return deduplicateLeaderboardByName(combined);
 }
 
 const inflightLeaderboardFetches = new Map<
@@ -722,19 +688,6 @@ export async function prepareGameSession(
   }
 
   try {
-    const profile = getCacheProfile();
-    const reconciled = await reconcileProfileWithOwnLeaderboardScores(
-      db,
-      uid,
-      profile,
-      [level],
-    );
-    setCacheProfile(reconciled);
-  } catch (error) {
-    console.error('Failed to reconcile profile bests before game', error);
-  }
-
-  try {
     await refreshLeaderboard(level);
   } catch (error) {
     console.error('Failed to refresh leaderboard before game', error);
@@ -743,69 +696,11 @@ export async function prepareGameSession(
   return { ok: true };
 }
 
-function ensureCurrentPlayerVisible(
-  records: GameRecord[],
-  level: DifficultyLevel,
-  limit: number,
-): GameRecord[] {
-  const trimmedName =
-    getCacheProfile().name.trim() || getSavedPlayerName().trim();
-
-  if (!trimmedName) {
-    return records.slice(0, limit);
-  }
-
-  const playerBest = getPersonalBest(trimmedName, level);
-
-  if (playerBest <= 0) {
-    return records.slice(0, limit);
-  }
-
-  const withoutPlayer = records.filter(
-    (record) => record.name !== trimmedName,
-  );
-  const playerRecord: GameRecord = {
-    name: trimmedName,
-    level,
-    score: playerBest,
-  };
-  const merged = deduplicateLeaderboardByName(
-    [...withoutPlayer, playerRecord],
-    limit,
-  );
-
-  if (merged.some((record) => record.name === trimmedName)) {
-    return merged;
-  }
-
-  const top = withoutPlayer.slice(0, limit);
-
-  if (top.length < limit) {
-    return deduplicateLeaderboardByName([...top, playerRecord], limit);
-  }
-
-  return deduplicateLeaderboardByName(
-    [...top.slice(0, limit - 1), playerRecord],
-    limit,
-  );
-}
-
 export function getTopRecordsByLevel(
   level: DifficultyLevel,
   limit = TOP_RECORDS_PER_LEVEL,
 ): GameRecord[] {
-  const sources: GameRecord[][] = [
-    getProfileLeaderboardRecords(getCacheProfile()),
-  ];
-  const leaderboard = getCacheLeaderboard(level);
-
-  if (leaderboard !== undefined) {
-    sources.unshift(leaderboard);
-  }
-
-  const merged = mergeTopRecords(level, ...sources);
-
-  return ensureCurrentPlayerVisible(merged, level, limit);
+  return (getCacheLeaderboard(level) ?? []).slice(0, limit);
 }
 
 export function saveRecord(
@@ -815,62 +710,79 @@ export function saveRecord(
   gameFrames: number,
 ): void {
   const trimmedName = name.trim();
-  if (!trimmedName || !isValidScoreValue(score)) {
+  if (!trimmedName) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      'Рекорд не синхронизирован: имя игрока не задано.',
+    );
+    return;
+  }
+
+  if (!isValidScoreValue(score)) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      'Рекорд не синхронизирован: некорректное значение очков.',
+    );
     return;
   }
 
   const uid = currentUid ?? getCurrentUid();
   const usesFirebase = Boolean(uid && isFirebaseEnabled());
 
-  if (usesFirebase) {
-    const session = getCachedActiveSession();
-    if (!session || session.level !== level) {
-      return;
-    }
-
-    if (!isValidGameFrames(score, gameFrames)) {
-      return;
-    }
-
-    if (!hasMinWallClockElapsed(session.startedAtMs, Date.now(), score)) {
-      return;
-    }
-  }
-
-  const profile = getCacheProfile();
-  const profileName = profile.name.trim();
-  const isCurrentPlayer =
-    profileName === trimmedName || profileName.length === 0;
-  const previousBest = getPersonalBest(trimmedName, level);
-  const isImprovedScore = score > previousBest;
-
-  if (isCurrentPlayer) {
-    setCacheProfile({
-      ...profile,
-      name: profileName.length === 0 ? trimmedName : profile.name,
-      bests: {
-        ...profile.bests,
-        [level]: Math.max(profile.bests[level], score),
-      },
-    });
-  }
-
   if (!usesFirebase) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      'Рекорд не синхронизирован: Firebase недоступен.',
+    );
     return;
   }
+
+  const session = getCachedActiveSession();
+  if (!session || session.level !== level) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      'Рекорд не синхронизирован: не найдена активная сессия уровня.',
+    );
+    return;
+  }
+
+  const validationFailure = getScoreValidationFailure(
+    score,
+    gameFrames,
+    session.startedAtMs,
+    Date.now(),
+  );
+  if (validationFailure) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      getScoreValidationMessage(validationFailure),
+    );
+    return;
+  }
+
+  setRecordSyncStatus(
+    RECORD_SYNC_STATUS.Pending,
+    level,
+    'Обновление...',
+  );
 
   enqueueTask(async () => {
     const db = getFirestoreDb();
     if (!db || !uid) {
+      setRecordSyncStatus(
+        RECORD_SYNC_STATUS.Rejected,
+        level,
+        'Рекорд не синхронизирован: нет подключения к серверу.',
+      );
       return;
     }
 
-    if (isImprovedScore) {
-      const currentProfile = getCacheProfile();
-      const profileForSave = currentProfile.name === trimmedName
-        ? currentProfile
-        : { ...currentProfile, name: trimmedName };
-
+    try {
       await upsertLeaderboardEntry(
         db,
         uid,
@@ -880,20 +792,32 @@ export function saveRecord(
         gameFrames,
       );
 
-      const updatedProfile = await updatePlayerBest(
-        db,
-        uid,
-        level,
-        score,
-        profileForSave,
-      );
-      setCacheProfile(updatedProfile);
-
-      const records = await fetchLeaderboard(db, level);
+      await completeGameSession(db, uid);
+      const records = await fetchAndCacheLeaderboard(level);
       applyLeaderboardCache(level, records);
-    }
+      setRecordSyncStatus(
+        RECORD_SYNC_STATUS.Synced,
+        level,
+        'Рекорд синхронизирован с leaderboard.',
+      );
+    } catch (error) {
+      if (isFirestorePermissionError(error)) {
+        console.warn('Record sync rejected by Firestore rules', error);
+        setRecordSyncStatus(
+          RECORD_SYNC_STATUS.Rejected,
+          level,
+          'Рекорд отклонён сервером: проверьте имя и условия сессии.',
+        );
+        return;
+      }
 
-    await completeGameSession(db, uid);
+      setRecordSyncStatus(
+        RECORD_SYNC_STATUS.Pending,
+        level,
+        'Синхронизация временно недоступна, повторим автоматически...',
+      );
+      throw error;
+    }
   });
 }
 
