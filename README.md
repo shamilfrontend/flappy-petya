@@ -7,7 +7,7 @@
 ## Структура
 
 ```
-web/        — Vite-приложение (игра, Firebase, тесты)
+web/        — Vite-приложение (игра, Supabase, тесты)
 android/    — Android-проект (Capacitor)
 ```
 
@@ -66,7 +66,7 @@ npm run cap:open:ios
 ## Игровые возможности
 
 - 3 уровня сложности (легкий / средний / сложный)
-- Локальные рекорды и опциональный Firebase-лидерборд (топ-10)
+- Supabase-лидерборд (топ-10)
 - Countdown 3-2-1 перед стартом раунда
 - Звуковые эффекты и haptic feedback; настройки звука и вибрации в меню «Настройки» на главном экране
 - Пауза во время игры (кнопка II или P/Escape)
@@ -81,7 +81,7 @@ npm run cap:open:ios
 
 ## Вне scope
 
-**Оффлайн-режим не нужен и не планируется.** Игра рассчитана на prod с настроенным Firebase (Anonymous Auth, Firestore-лидерборд). Имя игрока хранится в `localStorage`; Firestore используется для синхронизации рейтинга и anti-cheat. Не добавляйте полноценный offline/local режим, UX «вы офлайн» и обход Firebase при отсутствии сети.
+**Оффлайн-режим не нужен и не планируется.** Игра рассчитана на prod с настроенным Supabase (Anonymous Auth, Postgres-лидерборд). Имя игрока назначается автоматически и хранится только в пределах открытой вкладки (`sessionStorage`), Supabase используется для синхронизации рейтинга. Не добавляйте полноценный offline/local режим, UX «вы офлайн» и обход Supabase при отсутствии сети.
 
 ## Качество кода
 
@@ -107,44 +107,36 @@ npm run lint -w flappy-petya-web
 
 - Source: **GitHub Actions**
 
-## Firebase
+## Supabase
 
-Переменные окружения — в `web/.env.example`. Для CI — GitHub Secrets с префиксом `VITE_FIREBASE_*`.
-Правила Firestore — `firestore.rules` в корне репозитория. Их нужно **задеплоить в Firebase**, иначе клиент получит `Missing or insufficient permissions`:
+Переменные окружения — в `web/.env.example`. Для CI — GitHub Secrets:
 
-```bash
-npm install -g firebase-tools
-firebase login
-firebase use <project-id>
-firebase deploy --only firestore:rules
-```
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
-Конфиг CLI — [firebase.json](firebase.json).
+SQL схема и RLS политики лежат в `supabase/schema.sql`.
 
-### Защита от накрутки рекордов
+### Схема данных
 
-Без Cloud Functions защита строится на **игровых сессиях** и **Firestore rules**:
+Используется минимальная структура из двух таблиц:
 
-1. Перед раундом клиент создаёт `gameSessions/{uid}` с `startedAt: serverTimestamp()` и `status: active`.
-2. При game over в `leaderboard/{level}/scores/{uid}` пишутся `score`, `name` и `gameFrames` (кадры только в состоянии `Game`).
-3. Rules проверяют: активная сессия, совпадение уровня, минимальное время с начала сессии, диапазон `gameFrames` для счёта.
-4. Прямая запись `saveRecord(..., 9999)` из DevTools **не проходит** без ожидания ~5 ч для максимального счёта.
+1. `players` — `user_id`, `name`.
+2. `leaderboard_scores` — `user_id`, `level`, `score`.
 
-Локальная проверка дублируется в `web/src/lib/storage/score-validation.ts`.
+Имя игрока уникально глобально (без учёта регистра), один игрок имеет один рекорд на уровень.
 
-После деплоя rules **вручную удалите** подозрительные записи в Firebase Console (`leaderboard → hard → scores`).
-
-Опционально: включите [Firebase App Check](https://firebase.google.com/docs/app-check) для web/Android — дополнительный барьер для скриптов вне приложения.
+Подозрительные записи можно удалять в панели Supabase в таблице `leaderboard_scores`.
 
 ### Anonymous Auth
 
-1. [Firebase Console](https://console.firebase.google.com/) → проект → **Authentication** → **Sign-in method**
-2. Включите провайдер **Anonymous** (Status: Enabled)
-3. **Authentication** → **Settings** → **Authorized domains** — добавьте `localhost` и домен деплоя (`shamilfrontend.github.io`)
+1. В Supabase проекте включите **Anonymous Sign-Ins** в разделе Auth Providers.
+2. Используйте только publishable/anon ключ в клиенте (`VITE_SUPABASE_ANON_KEY`).
 
-Без включённого Anonymous провайдера инициализация storage падает с `auth/operation-not-allowed`.
+Без включенного anonymous входа инициализация storage не сможет получить `uid`.
 
-Имя игрока вводится в игре (до 30 символов) и сохраняется в `localStorage` (`flappy-petya-player-name`).
+При входе в игру пользователь получает случайное имя формата `Неопознанный <животное>`.
+Имя сохраняется только пока открыта текущая вкладка (`sessionStorage`), но при полном закрытии вкладки назначается новое имя.
+Перед стартом раунда имя проверяется на уникальность среди всех пользователей Supabase (без учёта регистра).
 
 ## Код web
 
@@ -155,7 +147,7 @@ web/src/
   graphics/   — спрайты и отрисовка
   input/      — pointer, haptic feedback
   audio/      — звуковые эффекты (Web Audio)
-  lib/        — Firebase, storage, viewport
-  ui/         — лоадер, ввод имени
+  lib/        — Supabase, storage, viewport
+  ui/         — лоадер, сообщения
 web/public/static/
 ```

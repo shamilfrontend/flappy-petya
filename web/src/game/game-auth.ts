@@ -1,11 +1,13 @@
 import { SOUND_EVENTS } from '../audio/sound';
 import { HAPTIC_EVENTS } from '../input/haptic';
 import {
+  ensureRandomPlayerNameForSession,
   getSavedPlayerName,
+  PLAYER_NAME_VALIDATION_STATUS,
   getTopRecordsByLevel,
   prepareGameSession,
   resolveLevelTopScore,
-  savePlayerName,
+  validatePlayerNameForStart,
   waitForStorageReady,
 } from '../lib/storage';
 import {
@@ -18,8 +20,28 @@ import { GAME_STATES } from './states';
 import { transitionToState } from './state-transition';
 
 const START_REENTRY_LOCK_MS = 450;
+const LEGACY_DEFAULT_PLAYER_NAME = 'Игрок';
 
-export async function startGameWithAuth(host: GameHost): Promise<void> {
+function isLegacyDefaultPlayerName(name: string): boolean {
+  return name.trim().toLowerCase() === LEGACY_DEFAULT_PLAYER_NAME.toLowerCase();
+}
+
+async function validateSessionPlayerName(name: string): Promise<string | null> {
+  const normalizedName = name.trim();
+  if (!normalizedName || isLegacyDefaultPlayerName(normalizedName)) {
+    return null;
+  }
+
+  const validation = await validatePlayerNameForStart(normalizedName);
+  if (validation.status !== PLAYER_NAME_VALIDATION_STATUS.Success) {
+    return null;
+  }
+
+  return getSavedPlayerName().trim() || normalizedName;
+}
+
+export async function startGameSession(host: GameHost): Promise<void> {
+  const startAttemptAt = performance.now();
   if (host.currentState !== GAME_STATES.Splash) {
     console.warn('[game-start] Blocked start outside splash', {
       state: host.currentState,
@@ -28,36 +50,103 @@ export async function startGameWithAuth(host: GameHost): Promise<void> {
     return;
   }
 
-  if (host.isAwaitingAuth) {
-    console.warn('[game-start] Blocked parallel start', {
-      reason: 'awaiting_auth_guard',
-    });
+  if (host.isStartingGame) {
+    if (import.meta.env.DEV) {
+      console.warn('[game-start] Blocked concurrent start attempt');
+    }
     return;
   }
 
-  host.isAwaitingAuth = true;
+  host.isStartingGame = true;
 
   try {
-    let name = getSavedPlayerName();
-    if (!name) {
-      const result = await host.nameInputOverlay.prompt();
-      if (!result.confirmed) {
-        return;
+    const prepareStartedAt = performance.now();
+    const sessionResult = await prepareGameSession(host.selectedDifficulty);
+    const prepareSessionMs = performance.now() - prepareStartedAt;
+    if (!sessionResult.ok) {
+      if (sessionResult.errorMessage) {
+        host.messageOverlay.show(sessionResult.errorMessage);
       }
 
-      savePlayerName(result.name);
-      host.syncStateFromStorage();
-      host.layoutUi();
-      name = getSavedPlayerName();
-      if (!name) {
-        return;
+      if (import.meta.env.DEV) {
+        console.info('[game-start][perf]', {
+          result: 'blocked_session_prepare',
+          prepareSessionMs: Number(prepareSessionMs.toFixed(1)),
+          totalMs: Number((performance.now() - startAttemptAt).toFixed(1)),
+        });
       }
+      return;
     }
 
-    await beginGame(host, name);
+    const resolveNameStartedAt = performance.now();
+    const name = await ensurePlayerNameForSession(host);
+    const resolveNameMs = performance.now() - resolveNameStartedAt;
+    if (!name) {
+      host.messageOverlay.show('Имя игрока обязательно для начала игры.');
+
+      if (import.meta.env.DEV) {
+        console.info('[game-start][perf]', {
+          result: 'cancelled_no_name',
+          resolveNameMs: Number(resolveNameMs.toFixed(1)),
+          totalMs: Number((performance.now() - startAttemptAt).toFixed(1)),
+        });
+      }
+      return;
+    }
+
+    const beginGameStartedAt = performance.now();
+    await beginGame(host, name, {
+      skipSessionPrepare: true,
+      prepareSessionMs,
+    });
+    const beginGameMs = performance.now() - beginGameStartedAt;
+    const { currentState } = host as GameHost;
+
+    if (import.meta.env.DEV) {
+      console.info('[game-start][perf]', {
+        result:
+          currentState === GAME_STATES.Countdown
+            ? 'started'
+            : 'blocked_before_countdown',
+        resolveNameMs: Number(resolveNameMs.toFixed(1)),
+        beginGameMs: Number(beginGameMs.toFixed(1)),
+        totalMs: Number((performance.now() - startAttemptAt).toFixed(1)),
+      });
+    }
+  } catch (error) {
+    console.error('Failed to start game session', error);
+    host.messageOverlay.show('Не удалось начать игру. Попробуйте снова.');
   } finally {
-    host.isAwaitingAuth = false;
+    host.isStartingGame = false;
   }
+}
+
+export async function ensurePlayerNameForSession(
+  host: GameHost,
+): Promise<string | null> {
+  const existingName = getSavedPlayerName().trim();
+  const validatedExistingName = await validateSessionPlayerName(existingName);
+  if (validatedExistingName) {
+    return validatedExistingName;
+  }
+
+  await waitForStorageReady();
+
+  const syncedName = getSavedPlayerName().trim();
+  const validatedSyncedName = await validateSessionPlayerName(syncedName);
+  if (validatedSyncedName) {
+    return validatedSyncedName;
+  }
+
+  const resolvedName = await ensureRandomPlayerNameForSession();
+  const validatedResolvedName = await validateSessionPlayerName(resolvedName ?? '');
+  if (!validatedResolvedName) {
+    return null;
+  }
+
+  host.syncStateFromStorage();
+  host.layoutUi();
+  return validatedResolvedName;
 }
 
 export async function openRecordsScreen(host: GameHost): Promise<void> {
@@ -70,27 +159,41 @@ export async function openRecordsScreen(host: GameHost): Promise<void> {
   transitionToState(host, GAME_STATES.Records, { reason: 'open_records' });
 }
 
-export async function beginGame(host: GameHost, name: string): Promise<void> {
-  const sessionResult = await prepareGameSession(host.selectedDifficulty);
-  if (!sessionResult.ok) {
-    if (sessionResult.errorMessage) {
-      host.messageOverlay.show(sessionResult.errorMessage);
+interface BeginGameOptions {
+  skipSessionPrepare?: boolean;
+  prepareSessionMs?: number;
+}
+
+export async function beginGame(
+  host: GameHost,
+  name: string,
+  options?: BeginGameOptions,
+): Promise<void> {
+  let prepareSessionMs = options?.prepareSessionMs ?? 0;
+  if (!options?.skipSessionPrepare) {
+    const prepareStartedAt = performance.now();
+    const sessionResult = await prepareGameSession(host.selectedDifficulty);
+    prepareSessionMs = performance.now() - prepareStartedAt;
+
+    if (!sessionResult.ok) {
+      if (sessionResult.errorMessage) {
+        host.messageOverlay.show(sessionResult.errorMessage);
+      }
+
+      if (import.meta.env.DEV) {
+        console.info('[game-start][perf]', {
+          result: 'blocked_session_prepare',
+          prepareSessionMs: Number(prepareSessionMs.toFixed(1)),
+        });
+      }
+
+      return;
     }
-    return;
   }
 
   host.playerName = name;
   host.isResolvingLevelTop = false;
-
-  try {
-    host.levelTopScore = await resolveLevelTopScore(host.selectedDifficulty);
-  } catch (error) {
-    console.error('Failed to resolve level top score at game start', error);
-    host.levelTopScore =
-      getTopRecordsByLevel(host.selectedDifficulty)[0]?.score ?? 0;
-  }
-
-  host.personalBest = host.levelTopScore;
+  host.levelTopScore = getTopRecordsByLevel(host.selectedDifficulty)[0]?.score ?? 0;
   host.score = 0;
   host.gameFrames = 0;
   host.hasSavedCurrentScore = false;
@@ -109,6 +212,26 @@ export async function beginGame(host: GameHost, name: string): Promise<void> {
   host.gooseTrail.clear();
   host.pipes.reset();
   host.pipes.seedInitial(host.viewport.logicalWidth, host.viewport.logicalHeight);
+
+  if (import.meta.env.DEV) {
+    console.info('[game-start][perf]', {
+      result: 'countdown_entered',
+      prepareSessionMs: Number(prepareSessionMs.toFixed(1)),
+    });
+  }
+
+  const startedLevel = host.selectedDifficulty;
+  void resolveLevelTopScore(startedLevel)
+    .then((topScore) => {
+      if (host.selectedDifficulty !== startedLevel) {
+        return;
+      }
+
+      host.levelTopScore = topScore;
+    })
+    .catch((error) => {
+      console.error('Failed to resolve level top score at game start', error);
+    });
 }
 
 export function startActiveGame(host: GameHost): void {

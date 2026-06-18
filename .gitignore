@@ -9,6 +9,7 @@ web/dist
 web/coverage
 .env
 .env.local
+web/.env.e2e.local
 android/.gradle/
 android/app/build/
 android/build/

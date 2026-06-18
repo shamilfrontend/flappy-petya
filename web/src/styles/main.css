@@ -76,72 +76,6 @@ canvas {
   user-select: none;
 }
 
-.name-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
-}
-
-.name-overlay[hidden] {
-  display: none;
-}
-
-.name-dialog {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(90vw, 320px);
-  padding: 20px;
-  border: 3px solid #d4c4b0;
-  border-radius: 12px;
-  background: #fff8f0;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-}
-
-.name-dialog__title {
-  margin: 0;
-  font: bold 20px system-ui, sans-serif;
-  color: #2a2a2a;
-  text-align: center;
-}
-
-.name-dialog__input {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 12px 14px;
-  border: 2px solid #d4c4b0;
-  border-radius: 8px;
-  font: 16px system-ui, sans-serif;
-  color: #2a2a2a;
-  background: #fff;
-}
-
-.name-dialog__input:focus {
-  outline: none;
-  border-color: #00a196;
-}
-
-.name-dialog__error {
-  margin: 0;
-  font: 14px system-ui, sans-serif;
-  color: #c0392b;
-  text-align: center;
-}
-
-.name-dialog__button {
-  padding: 12px 16px;
-  border: 2px solid #2a2a2a;
-  border-radius: 8px;
-  font: bold 16px system-ui, sans-serif;
-  color: #fff;
-  background: #00a196;
-  cursor: pointer;
-}
-
 .message-overlay {
   position: fixed;
   inset: 0;
@@ -192,3 +126,4 @@ canvas {
   background: #00a196;
   cursor: pointer;
 }
+

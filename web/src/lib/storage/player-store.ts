@@ -1,79 +1,86 @@
-import {
-  doc,
-  getDoc,
-  serverTimestamp,
-  setDoc,
-  type Firestore,
-} from 'firebase/firestore';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { DifficultyLevel } from '../../game/difficulty';
+import { isSupabaseUniqueViolation } from '../supabase/errors';
 import {
   createDefaultProfile,
   createEmptyBests,
   type PlayerProfile,
 } from './types';
 
-function playerDocRef(db: Firestore, uid: string) {
-  return doc(db, 'players', uid);
+interface PlayerRow {
+  name: string | null;
 }
 
-function parseProfile(data: Record<string, unknown>): PlayerProfile {
+export const PLAYER_NAME_CLAIM_STATUS = {
+  Success: 'success',
+  Taken: 'taken',
+  Error: 'error',
+} as const;
+
+export type PlayerNameClaimStatus =
+  typeof PLAYER_NAME_CLAIM_STATUS[keyof typeof PLAYER_NAME_CLAIM_STATUS];
+
+export interface PlayerNameClaimResult {
+  status: PlayerNameClaimStatus;
+  profile?: PlayerProfile;
+  error?: unknown;
+}
+
+function parseProfile(data: Partial<PlayerRow>): PlayerProfile {
   const profile: PlayerProfile = {
     name: typeof data.name === 'string' ? data.name.trim() : '',
     bests: createEmptyBests(),
   };
 
-  if (
-    data.selectedDifficulty === 'easy'
-    || data.selectedDifficulty === 'medium'
-    || data.selectedDifficulty === 'hard'
-  ) {
-    profile.selectedDifficulty = data.selectedDifficulty;
-  }
-
-  if (
-    data.selectedRecordsLevel === 'easy'
-    || data.selectedRecordsLevel === 'medium'
-    || data.selectedRecordsLevel === 'hard'
-  ) {
-    profile.selectedRecordsLevel = data.selectedRecordsLevel;
-  }
-
   return profile;
 }
 
 export async function fetchPlayerProfile(
-  db: Firestore,
+  db: SupabaseClient,
   uid: string,
 ): Promise<PlayerProfile | null> {
-  const snapshot = await getDoc(playerDocRef(db, uid));
-  if (!snapshot.exists()) {
+  const { data, error } = await db
+    .from('players')
+    .select('name')
+    .eq('user_id', uid)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
     return null;
   }
 
-  return parseProfile(snapshot.data() as Record<string, unknown>);
+  return parseProfile(data as Partial<PlayerRow>);
 }
 
 export async function savePlayerProfile(
-  db: Firestore,
+  db: SupabaseClient,
   uid: string,
   profile: PlayerProfile,
 ): Promise<void> {
-  await setDoc(
-    playerDocRef(db, uid),
-    {
-      name: profile.name,
-      // Рекорды хранятся только в leaderboard.
-      bests: createEmptyBests(),
-      selectedDifficulty: profile.selectedDifficulty ?? null,
-      selectedRecordsLevel: profile.selectedRecordsLevel ?? null,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
+  const trimmedName = profile.name.trim();
+  if (!trimmedName) {
+    return;
+  }
+
+  const { error } = await db
+    .from('players')
+    .upsert({
+      user_id: uid,
+      name: trimmedName,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' });
+
+  if (error) {
+    throw error;
+  }
 }
 
 export async function updatePlayerName(
-  db: Firestore,
+  db: SupabaseClient,
   uid: string,
   name: string,
   currentProfile: PlayerProfile,
@@ -85,6 +92,46 @@ export async function updatePlayerName(
 
   await savePlayerProfile(db, uid, profile);
   return profile;
+}
+
+export async function claimPlayerName(
+  db: SupabaseClient,
+  uid: string,
+  name: string,
+  currentProfile: PlayerProfile,
+): Promise<PlayerNameClaimResult> {
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    return {
+      status: PLAYER_NAME_CLAIM_STATUS.Error,
+      error: new Error('Player name is empty'),
+    };
+  }
+
+  const profile: PlayerProfile = {
+    ...currentProfile,
+    name: trimmedName,
+  };
+
+  try {
+    await savePlayerProfile(db, uid, profile);
+
+    return {
+      status: PLAYER_NAME_CLAIM_STATUS.Success,
+      profile,
+    };
+  } catch (error) {
+    if (isSupabaseUniqueViolation(error)) {
+      return {
+        status: PLAYER_NAME_CLAIM_STATUS.Taken,
+      };
+    }
+
+    return {
+      status: PLAYER_NAME_CLAIM_STATUS.Error,
+      error,
+    };
+  }
 }
 
 export function buildProfileFromLocal(

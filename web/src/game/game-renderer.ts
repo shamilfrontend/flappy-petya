@@ -28,7 +28,6 @@ import {
   drawSettingsToggleRow,
   drawSubtitle,
   drawTitle,
-  drawTitleWithLogo,
 } from '../graphics/ui-text';
 import {
   getRecordSyncStatus,
@@ -49,7 +48,8 @@ import type { GameHost } from './game-host';
 import { getMedal } from './medals';
 import { GAME_STATES } from './states';
 
-const RETRY_BUTTON_LABEL = 'Ещё раз';
+const SCORE_HOME_BUTTON_LABEL = 'На главную';
+const SCORE_RETRY_BUTTON_LABEL = 'Сыграть ещё';
 const RECORDS_BUTTON_LABEL = 'Рекорды';
 const SETTINGS_BUTTON_LABEL = 'Настройки';
 const BACK_BUTTON_LABEL = 'Назад';
@@ -97,14 +97,7 @@ export function renderGame(host: GameHost): void {
   drawGround(ctx, logicalWidth, logicalHeight, host.fgpos, palette);
 
   if (host.currentState === GAME_STATES.Splash) {
-    drawTitleWithLogo(
-      ctx,
-      'Flappy Petya',
-      host.logoImg,
-      centerX,
-      splashLayout.titleY,
-      logicalWidth,
-    );
+    drawTitle(ctx, 'Flappy Petya', centerX, splashLayout.titleY);
     drawSubtitle(
       ctx,
       'Выбери уровень',
@@ -248,7 +241,7 @@ export function renderGame(host: GameHost): void {
       drawScorePanel(
         ctx,
         host.score,
-        host.personalBest,
+        host.levelTopScore,
         centerX,
         scoreLayout.panelY,
         { medal: getMedal(host.score), uiTimer: host.scoreUiTimer },
@@ -258,7 +251,22 @@ export function renderGame(host: GameHost): void {
         0,
         Math.min(1, (host.scoreUiTimer - retryDelay) / SCORE_UI_ANIM_DURATION),
       );
-      drawButton(ctx, RETRY_BUTTON_LABEL, host.okBtn, false, 0, retryEntrance);
+      drawButton(
+        ctx,
+        SCORE_HOME_BUTTON_LABEL,
+        host.scoreHomeBtn,
+        false,
+        0,
+        retryEntrance,
+      );
+      drawButton(
+        ctx,
+        SCORE_RETRY_BUTTON_LABEL,
+        host.scoreRetryBtn,
+        false,
+        0,
+        retryEntrance,
+      );
     } else {
       drawSubtitle(
         ctx,

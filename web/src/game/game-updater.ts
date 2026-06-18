@@ -20,8 +20,9 @@ function finalizeScoreScreen(host: GameHost, levelTopScore: number): void {
     return;
   }
 
-  host.levelTopScore = levelTopScore;
-  host.isNewBest = host.score > levelTopScore && levelTopScore > 0;
+  const baselineTopScore = Math.max(0, levelTopScore);
+  host.isNewBest = host.score > 0 && host.score > baselineTopScore;
+  host.levelTopScore = Math.max(baselineTopScore, host.score);
 
   if (host.score > 0 && host.playerName.trim()) {
     saveRecord(
@@ -40,7 +41,6 @@ function finalizeScoreScreen(host: GameHost, levelTopScore: number): void {
     announceGameMessage(`Игра окончена. Счёт: ${host.score}`);
   }
 
-  host.personalBest = Math.max(levelTopScore, host.score);
   host.hasSavedCurrentScore = true;
   host.isResolvingLevelTop = false;
 }

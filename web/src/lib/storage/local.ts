@@ -1,4 +1,5 @@
 import type { DifficultyLevel } from '../../game/difficulty';
+import { MAX_PLAYER_NAME_LENGTH } from './types';
 
 const PLAYER_NAME_KEY = 'flappy-petya-player-name';
 const SELECTED_DIFFICULTY_KEY = 'flappy-petya-selected-difficulty';
@@ -12,23 +13,40 @@ function parseDifficultyLevel(value: string | null): DifficultyLevel | undefined
   return undefined;
 }
 
+function normalizeLocalPlayerName(name: string): string {
+  const trimmedName = name.trim();
+  if (!trimmedName || trimmedName.length > MAX_PLAYER_NAME_LENGTH) {
+    return '';
+  }
+
+  return trimmedName;
+}
+
 export function getLocalPlayerName(): string {
   try {
-    const value = localStorage.getItem(PLAYER_NAME_KEY);
-    return value?.trim() ?? '';
+    const value = sessionStorage.getItem(PLAYER_NAME_KEY);
+    return value ? normalizeLocalPlayerName(value) : '';
   } catch {
     return '';
   }
 }
 
 export function saveLocalPlayerName(name: string): void {
-  const trimmedName = name.trim();
+  const trimmedName = normalizeLocalPlayerName(name);
   if (!trimmedName) {
     return;
   }
 
   try {
-    localStorage.setItem(PLAYER_NAME_KEY, trimmedName);
+    sessionStorage.setItem(PLAYER_NAME_KEY, trimmedName);
+  } catch {
+    // private mode or storage disabled
+  }
+}
+
+export function clearLocalPlayerName(): void {
+  try {
+    sessionStorage.removeItem(PLAYER_NAME_KEY);
   } catch {
     // private mode or storage disabled
   }

@@ -17,7 +17,8 @@ import {
 import { DIFFICULTIES } from './difficulty';
 import type { GameHost } from './game-host';
 
-const RETRY_BUTTON_LABEL = 'Ещё раз';
+const SCORE_HOME_BUTTON_LABEL = 'На главную';
+const SCORE_RETRY_BUTTON_LABEL = 'Сыграть ещё';
 const BACK_BUTTON_LABEL = 'Назад';
 
 export function layoutGameUi(host: GameHost): void {
@@ -26,9 +27,19 @@ export function layoutGameUi(host: GameHost): void {
   const splashLayout = getSplashLayout(logicalHeight);
   const recordsLayout = getRecordsLayout(logicalHeight);
 
-  const retryBtnSize = measureButton(host.ctx, RETRY_BUTTON_LABEL);
-  host.okBtn = {
-    x: (logicalWidth - retryBtnSize.width) / 2,
+  const homeBtnSize = measureButton(host.ctx, SCORE_HOME_BUTTON_LABEL);
+  const retryBtnSize = measureButton(host.ctx, SCORE_RETRY_BUTTON_LABEL);
+  const scoreButtonsGap = 12;
+  const scoreButtonsWidth = homeBtnSize.width + retryBtnSize.width + scoreButtonsGap;
+  const scoreButtonsX = (logicalWidth - scoreButtonsWidth) / 2;
+  host.scoreHomeBtn = {
+    x: scoreButtonsX,
+    y: scoreLayout.retryButtonY,
+    width: homeBtnSize.width,
+    height: homeBtnSize.height,
+  };
+  host.scoreRetryBtn = {
+    x: scoreButtonsX + homeBtnSize.width + scoreButtonsGap,
     y: scoreLayout.retryButtonY,
     width: retryBtnSize.width,
     height: retryBtnSize.height,

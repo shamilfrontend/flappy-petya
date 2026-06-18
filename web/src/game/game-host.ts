@@ -8,7 +8,6 @@ import type { ButtonRect } from '../graphics/ui-text';
 import type { HapticManager } from '../input/haptic';
 import type { ViewportState } from '../lib/viewport';
 import type { MessageOverlay } from '../ui/message-overlay';
-import type { NameInputOverlay } from '../ui/name-input';
 import type { DifficultyLevel } from './difficulty';
 import type { GameState } from './states';
 
@@ -26,7 +25,6 @@ export interface GameHost {
   sound: SoundManager;
   haptic: HapticManager;
   messageOverlay: MessageOverlay;
-  nameInputOverlay: NameInputOverlay;
 
   currentState: GameState;
   previousState: GameState;
@@ -39,10 +37,8 @@ export interface GameHost {
   gameFrames: number;
   score: number;
   playerName: string;
-  personalBest: number;
   levelTopScore: number;
   isResolvingLevelTop: boolean;
-  isAwaitingAuth: boolean;
   selectedDifficulty: DifficultyLevel;
   recordsLevelTab: DifficultyLevel;
   recordsRefreshLevel: DifficultyLevel | null;
@@ -56,8 +52,10 @@ export interface GameHost {
   shakeTimer: number;
   shakeIntensity: number;
   nextStartAllowedAtMs: number;
+  isStartingGame: boolean;
 
-  okBtn: ButtonRect;
+  scoreHomeBtn: ButtonRect;
+  scoreRetryBtn: ButtonRect;
   recordsBtn: ButtonRect;
   playerNameBtn: ButtonRect;
   backBtn: ButtonRect;

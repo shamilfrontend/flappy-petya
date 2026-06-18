@@ -15,7 +15,6 @@ import {
 } from '../lib/storage';
 import { hideAppLoader } from '../ui/app-loader';
 import { MessageOverlay } from '../ui/message-overlay';
-import { NameInputOverlay } from '../ui/name-input';
 import {
   applyCanvasSize,
   getViewportState,
@@ -30,7 +29,7 @@ import {
   beginGame as beginGameSession,
   openRecordsScreen,
   startActiveGame as startActiveGameSession,
-  startGameWithAuth,
+  startGameSession,
   triggerDeath as triggerGameDeath,
 } from './game-auth';
 import type { GameHost } from './game-host';
@@ -68,7 +67,6 @@ export class Game implements GameHost {
   readonly sound = getSoundManager();
   readonly haptic = getHapticManager();
   readonly messageOverlay = new MessageOverlay();
-  readonly nameInputOverlay = new NameInputOverlay();
 
   currentState: GameState = GAME_STATES.Splash;
   previousState: GameState = GAME_STATES.Splash;
@@ -81,10 +79,8 @@ export class Game implements GameHost {
   gameFrames = 0;
   score = 0;
   playerName = getSavedPlayerName();
-  personalBest = 0;
   levelTopScore = 0;
   isResolvingLevelTop = false;
-  isAwaitingAuth = false;
   selectedDifficulty: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
   recordsLevelTab: DifficultyLevel = DIFFICULTY_LEVELS.Medium;
   recordsRefreshLevel: DifficultyLevel | null = null;
@@ -98,8 +94,10 @@ export class Game implements GameHost {
   shakeTimer = 0;
   shakeIntensity = 0;
   nextStartAllowedAtMs = 0;
+  isStartingGame = false;
 
-  okBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  scoreHomeBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
+  scoreRetryBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   recordsBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   playerNameBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
   backBtn: ButtonRect = { x: 0, y: 0, width: 0, height: 0 };
@@ -195,7 +193,6 @@ export class Game implements GameHost {
 
     this.canvas?.remove();
     this.messageOverlay.hide();
-    this.nameInputOverlay.hide();
   }
 
   layoutUi(): void {
@@ -219,7 +216,6 @@ export class Game implements GameHost {
     const savedRecordsLevel = getSelectedRecordsLevel();
     this.recordsLevelTab = savedRecordsLevel ?? this.selectedDifficulty;
 
-    this.personalBest = 0;
   }
 
   applyDifficulty(level: DifficultyLevel, persist = true): void {
@@ -227,8 +223,6 @@ export class Game implements GameHost {
     this.selectedDifficulty = level;
     this.fgScrollSpeed = settings.fgScrollSpeed;
     this.pipes.setDifficulty(settings);
-    this.personalBest = 0;
-
     if (persist) {
       saveSelectedDifficulty(level);
     }
@@ -265,7 +259,7 @@ export class Game implements GameHost {
   }
 
   startGame(): Promise<void> {
-    return startGameWithAuth(this);
+    return startGameSession(this);
   }
 
   openRecords(): Promise<void> {
@@ -296,6 +290,10 @@ export class Game implements GameHost {
         });
         return true;
       case GAME_STATES.Score:
+        if (this.deathAnimTimer > 0 || !this.hasSavedCurrentScore) {
+          return true;
+        }
+
         transitionToState(this, GAME_STATES.Splash, {
           reason: 'native_back_score_to_splash',
           lockStartForMs: 450,

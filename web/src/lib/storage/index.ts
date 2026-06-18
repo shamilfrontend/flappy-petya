@@ -1,17 +1,17 @@
 import type { DifficultyLevel } from '../../game/difficulty';
 import {
-  getFirestoreDb,
-  initFirebaseApp,
-  isFirebaseEnabled,
-} from '../firebase/app';
+  getSupabaseClient,
+  initSupabaseClient,
+  isSupabaseEnabled,
+} from '../supabase/client';
 import {
   getCurrentUid,
   initAuth,
   signInAnonymouslyUser,
   signOutUser,
   waitForAuthReady,
-} from '../firebase/auth';
-import { isFirestorePermissionError } from '../firebase/errors';
+} from '../supabase/auth';
+import { isSupabasePermissionError } from '../supabase/errors';
 import {
   clearLeaderboardCache,
   getCacheLeaderboard,
@@ -24,6 +24,7 @@ import {
   setStorageCacheReady,
 } from './cache';
 import {
+  clearLocalPlayerName,
   getLocalPlayerName,
   getLocalSelectedDifficulty,
   getLocalSelectedRecordsLevel,
@@ -31,30 +32,21 @@ import {
   saveLocalSelectedDifficulty,
   saveLocalSelectedRecordsLevel,
 } from './local';
-import { migrateLocalDataToFirestore } from './migrate';
 import {
+  claimPlayerName,
   fetchPlayerProfile,
   savePlayerProfile,
   updatePlayerName,
+  PLAYER_NAME_CLAIM_STATUS,
 } from './player-store';
 import {
   fetchLeaderboard,
-  updateLeaderboardName,
   upsertLeaderboardEntry,
 } from './records-store';
-import {
-  getScoreValidationFailure,
-  isValidScoreValue,
-  SCORE_VALIDATION_FAILURES,
-} from './score-validation';
-import {
-  clearCachedSession,
-  completeGameSession,
-  getCachedActiveSession,
-  startGameSession,
-} from './session-store';
+import { isValidScoreValue } from './score-validation';
 import {
   createDefaultProfile,
+  MAX_PLAYER_NAME_LENGTH,
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
   type PlayerProfile,
@@ -129,20 +121,6 @@ export function getRecordSyncStatus(
   }
 
   return lastRecordSyncStatus;
-}
-
-function getScoreValidationMessage(
-  failure: ReturnType<typeof getScoreValidationFailure>,
-): string {
-  if (failure === SCORE_VALIDATION_FAILURES.InvalidGameFrames) {
-    return 'Рекорд не синхронизирован: проверка времени игры не пройдена.';
-  }
-
-  if (failure === SCORE_VALIDATION_FAILURES.MinWallClockNotReached) {
-    return 'Рекорд не синхронизирован: партия завершилась слишком быстро.';
-  }
-
-  return 'Рекорд не синхронизирован: некорректные данные счёта.';
 }
 
 function beginLeaderboardLoading(): void {
@@ -221,16 +199,57 @@ function enqueueTask(task: StorageTask): void {
   void processQueue();
 }
 
+function shouldRetryQueueTask(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return true;
+  }
+
+  const supabaseError = error as {
+    status?: number;
+    code?: string;
+    message?: string;
+    details?: string;
+  };
+
+  if (isSupabasePermissionError(error)) {
+    return false;
+  }
+
+  const { status } = supabaseError;
+  if (typeof status === 'number') {
+    if (status >= 500 || status === 429) {
+      return true;
+    }
+
+    if (status >= 400) {
+      return false;
+    }
+  }
+
+  const message = `${supabaseError.message ?? ''} ${supabaseError.details ?? ''}`
+    .toLowerCase();
+
+  if (
+    message.includes('violates check constraint')
+    || message.includes('violates not-null constraint')
+    || message.includes('invalid input syntax')
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 async function processQueue(): Promise<void> {
   if (isProcessingQueue || pendingTasks.length === 0) {
     return;
   }
 
-  if (!isFirebaseEnabled() || !currentUid) {
+  if (!isSupabaseEnabled() || !currentUid) {
     return;
   }
 
-  const db = getFirestoreDb();
+  const db = getSupabaseClient();
   if (!db) {
     return;
   }
@@ -247,9 +266,11 @@ async function processQueue(): Promise<void> {
     try {
       await task();
     } catch (error) {
-      console.error('Firebase storage task failed', error);
-      pendingTasks.unshift(task);
-      hadFailure = true;
+      console.error('Supabase storage task failed', error);
+      if (shouldRetryQueueTask(error)) {
+        pendingTasks.unshift(task);
+        hadFailure = true;
+      }
       break;
     }
   }
@@ -264,11 +285,35 @@ async function processQueue(): Promise<void> {
   }
 }
 
+function hasPendingQueueWork(): boolean {
+  return isProcessingQueue || pendingTasks.length > 0;
+}
+
+async function drainQueueForLeaderboardSync(timeoutMs = 1500): Promise<void> {
+  const startedAt = Date.now();
+
+  while (hasPendingQueueWork()) {
+    await processQueue();
+
+    if (!hasPendingQueueWork()) {
+      return;
+    }
+
+    if (Date.now() - startedAt >= timeoutMs) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
+}
+
 const LEADERBOARD_FETCH_ATTEMPTS = 3;
 const LEADERBOARD_FETCH_RETRY_MS = 400;
 
 async function loadAllLeaderboards(): Promise<void> {
-  const db = getFirestoreDb();
+  const db = getSupabaseClient();
   if (!db) {
     return;
   }
@@ -295,15 +340,19 @@ async function clearStaleAuthSession(): Promise<void> {
 
   try {
     clearQueueState();
-    clearCachedSession();
     currentUid = null;
     resetStorageCache();
+    clearLocalPlayerName();
     await signOutUser();
 
-    const user = await signInAnonymouslyUser();
-    if (user?.uid) {
-      await loadStorageForUser(user.uid);
+    const anonymousUser = await signInAnonymouslyUser();
+    const restoredUid = anonymousUser?.uid ?? getCurrentUid();
+    if (!restoredUid) {
+      console.warn('Failed to restore anonymous session: user id is missing');
+      return;
     }
+
+    await loadStorageForUser(restoredUid);
   } catch (error) {
     console.error('Failed to restore anonymous session', error);
   } finally {
@@ -314,24 +363,15 @@ async function clearStaleAuthSession(): Promise<void> {
 async function loadStorageForUser(uid: string): Promise<void> {
   currentUid = uid;
 
-  const db = getFirestoreDb();
+  const db = getSupabaseClient();
   if (!db) {
     return;
   }
 
   try {
-    const localName = getLocalPlayerName();
     let profile = await fetchPlayerProfile(db, uid);
-
-    if (!profile?.name) {
-      profile = await migrateLocalDataToFirestore(db, uid);
-    } else if (!profile.name.trim() && localName) {
-      profile = { ...profile, name: localName };
-      await savePlayerProfile(db, uid, profile);
-    }
-
-    if (profile.name.trim() && !localName) {
-      saveLocalPlayerName(profile.name);
+    if (!profile) {
+      profile = createDefaultProfile();
     }
 
     const localSelectedDifficulty = getLocalSelectedDifficulty();
@@ -363,9 +403,9 @@ async function loadStorageForUser(uid: string): Promise<void> {
     await loadAllLeaderboards();
     void processQueue();
   } catch (error) {
-    if (isFirestorePermissionError(error)) {
+    if (isSupabasePermissionError(error)) {
       console.warn(
-        'Firestore access denied — сессия сброшена. Проверьте деплой firestore.rules и Anonymous Auth.',
+        'Supabase access denied — сессия сброшена. Проверьте RLS-политики и Anonymous Auth.',
         error,
       );
       await clearStaleAuthSession();
@@ -377,18 +417,16 @@ async function loadStorageForUser(uid: string): Promise<void> {
 }
 
 function hydrateProfileFromLocalStorage(): void {
-  const localName = getLocalPlayerName();
   const localSelectedDifficulty = getLocalSelectedDifficulty();
   const localSelectedRecordsLevel = getLocalSelectedRecordsLevel();
 
-  if (!localName && !localSelectedDifficulty && !localSelectedRecordsLevel) {
+  if (!localSelectedDifficulty && !localSelectedRecordsLevel) {
     return;
   }
 
   const currentProfile = getCacheProfile();
   setCacheProfile({
     ...currentProfile,
-    name: localName || currentProfile.name,
     selectedDifficulty:
       localSelectedDifficulty ?? currentProfile.selectedDifficulty,
     selectedRecordsLevel:
@@ -401,20 +439,19 @@ export async function initStorage(): Promise<void> {
   registerOnlineListener();
   hydrateProfileFromLocalStorage();
 
-  if (!isFirebaseEnabled()) {
+  if (!isSupabaseEnabled()) {
     setStorageCacheReady(true);
     return;
   }
 
   try {
-    initFirebaseApp();
+    initSupabaseClient();
     initAuth();
     await waitForAuthReady();
-
     let uid = getCurrentUid();
     if (!uid) {
-      const user = await signInAnonymouslyUser();
-      uid = user?.uid ?? null;
+      const anonymousUser = await signInAnonymouslyUser();
+      uid = anonymousUser?.uid ?? getCurrentUid();
     }
 
     if (uid) {
@@ -454,12 +491,20 @@ export function isLeaderboardLoading(): boolean {
   return isLeaderboardCacheLoading();
 }
 
-export function isFirebaseSyncPending(): boolean {
+export function isRemoteSyncPending(): boolean {
   return pendingTasks.length > 0 || isProcessingQueue;
+}
+
+export function isFirebaseSyncPending(): boolean {
+  return isRemoteSyncPending();
 }
 
 export function getSavedPlayerName(): string {
   return getLocalPlayerName() || getCacheProfile().name;
+}
+
+export function hasActiveAccountSession(): boolean {
+  return Boolean(currentUid ?? getCurrentUid());
 }
 
 export function getSelectedDifficulty(): DifficultyLevel | undefined {
@@ -471,8 +516,16 @@ export function getSelectedRecordsLevel(): DifficultyLevel | undefined {
 }
 
 export function savePlayerName(name: string): void {
-  const trimmedName = name.trim();
+  const trimmedName = normalizePlayerName(name);
   if (!trimmedName) {
+    return;
+  }
+
+  if (isPlayerNameTooLong(trimmedName)) {
+    console.warn('Player name is too long and will not be saved', {
+      maxLength: MAX_PLAYER_NAME_LENGTH,
+      actualLength: trimmedName.length,
+    });
     return;
   }
 
@@ -485,12 +538,12 @@ export function savePlayerName(name: string): void {
   saveLocalPlayerName(trimmedName);
 
   const uid = currentUid ?? getCurrentUid();
-  if (!uid || !isFirebaseEnabled()) {
+  if (!uid || !isSupabaseEnabled()) {
     return;
   }
 
   enqueueTask(async () => {
-    const db = getFirestoreDb();
+    const db = getSupabaseClient();
     if (!db) {
       return;
     }
@@ -502,9 +555,248 @@ export function savePlayerName(name: string): void {
       getCacheProfile(),
     );
     setCacheProfile(updatedProfile);
-    await updateLeaderboardName(db, uid, trimmedName);
     await loadAllLeaderboards();
   });
+}
+
+export const PLAYER_NAME_VALIDATION_STATUS = {
+  Success: 'success',
+  Taken: 'taken',
+  Unavailable: 'unavailable',
+} as const;
+
+export type PlayerNameValidationStatus =
+  typeof PLAYER_NAME_VALIDATION_STATUS[keyof typeof PLAYER_NAME_VALIDATION_STATUS];
+
+export interface PlayerNameValidationResult {
+  status: PlayerNameValidationStatus;
+  message?: string;
+}
+
+const PLAYER_NAME_TAKEN_MESSAGE =
+  'такой пользователь уже есть, введите другое имя';
+const PLAYER_NAME_UNAVAILABLE_MESSAGE =
+  'Не удалось проверить имя. Попробуйте снова.';
+const PLAYER_NAME_TOO_LONG_MESSAGE =
+  `Имя слишком длинное (максимум ${MAX_PLAYER_NAME_LENGTH} символов).`;
+const SESSION_PREPARE_ERROR_MESSAGE = 'Не удалось подготовить игровую сессию.';
+const ANONYMOUS_NAME_PREFIX = 'Неопознанный';
+const ANONYMOUS_NAME_CODE_LENGTH = 5;
+const ANONYMOUS_NAME_SUFFIXES = [
+  'енот',
+  'суслик',
+  'бобр',
+  'ежик',
+  'выдра',
+  'лисенок',
+  'пингвин',
+  'лемур',
+  'барсук',
+  'котик',
+  'сурикат',
+  'ястреб',
+  'волк',
+  'рысь',
+  'тигр',
+  'леопард',
+  'ягуар',
+  'пума',
+  'заяц',
+  'кролик',
+  'хомяк',
+  'шиншилла',
+  'норка',
+  'ласка',
+  'куница',
+  'соболь',
+  'ондатра',
+  'манул',
+  'койот',
+  'шакал',
+  'муравьед',
+  'тапир',
+  'кенгуру',
+  'коала',
+  'кабарга',
+  'олень',
+  'лось',
+  'кабан',
+  'бурундук',
+  'белка',
+  'дятел',
+  'сокол',
+  'орел',
+  'филин',
+  'чайка',
+  'цапля',
+  'аист',
+  'альбатрос',
+  'тюлень',
+  'морж',
+] as const;
+const RANDOM_NAME_CLAIM_ATTEMPTS = 30;
+
+function normalizePlayerName(name: string): string {
+  return name.trim();
+}
+
+function isPlayerNameTooLong(name: string): boolean {
+  return name.length > MAX_PLAYER_NAME_LENGTH;
+}
+
+function pickRandomAnonymousSuffix(): string {
+  const index = Math.floor(Math.random() * ANONYMOUS_NAME_SUFFIXES.length);
+  return ANONYMOUS_NAME_SUFFIXES[index] ?? ANONYMOUS_NAME_SUFFIXES[0];
+}
+
+function generateAnonymousNameCode(): string {
+  const randomValue = Math.floor(Math.random() * (36 ** ANONYMOUS_NAME_CODE_LENGTH));
+  return randomValue
+    .toString(36)
+    .padStart(ANONYMOUS_NAME_CODE_LENGTH, '0');
+}
+
+function buildRandomAnonymousName(): string {
+  const randomAnimal = pickRandomAnonymousSuffix();
+  const uniqueCode = generateAnonymousNameCode();
+  const maxTailLength = Math.max(
+    1,
+    MAX_PLAYER_NAME_LENGTH - ANONYMOUS_NAME_PREFIX.length - 1,
+  );
+  const maxAnimalLength = Math.max(
+    1,
+    maxTailLength - uniqueCode.length - 1,
+  );
+  const animalPart = randomAnimal.slice(0, maxAnimalLength);
+  const tail = `${animalPart}-${uniqueCode}`;
+
+  return `${ANONYMOUS_NAME_PREFIX} ${tail}`.trim();
+}
+
+export async function ensureRandomPlayerNameForSession(): Promise<string | null> {
+  const existingName = getSavedPlayerName().trim();
+  if (existingName) {
+    return existingName;
+  }
+
+  if (!isSupabaseEnabled()) {
+    const fallbackName = buildRandomAnonymousName();
+    savePlayerName(fallbackName);
+    return fallbackName;
+  }
+
+  const uid = currentUid ?? getCurrentUid();
+  const db = getSupabaseClient();
+  if (!uid || !db) {
+    return null;
+  }
+
+  for (let attempt = 0; attempt < RANDOM_NAME_CLAIM_ATTEMPTS; attempt += 1) {
+    const candidate = buildRandomAnonymousName();
+    const claimResult = await claimPlayerName(db, uid, candidate, getCacheProfile());
+
+    if (
+      claimResult.status === PLAYER_NAME_CLAIM_STATUS.Success
+      && claimResult.profile
+    ) {
+      setCacheProfile(claimResult.profile);
+      saveLocalPlayerName(claimResult.profile.name);
+      return claimResult.profile.name;
+    }
+
+    if (claimResult.status === PLAYER_NAME_CLAIM_STATUS.Error) {
+      console.error('Failed to claim random anonymous player name', claimResult.error);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+export async function validatePlayerNameForStart(
+  name: string,
+): Promise<PlayerNameValidationResult> {
+  const trimmedName = normalizePlayerName(name);
+  if (!trimmedName) {
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Unavailable,
+      message: 'Введите имя',
+    };
+  }
+
+  if (isPlayerNameTooLong(trimmedName)) {
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Unavailable,
+      message: PLAYER_NAME_TOO_LONG_MESSAGE,
+    };
+  }
+
+  const uid = currentUid ?? getCurrentUid();
+  const profile = getCacheProfile();
+
+  // Если имя уже принадлежит текущему пользователю, повторная проверка не нужна.
+  if (
+    profile.name
+    && profile.name.trim().toLowerCase() === trimmedName.toLowerCase()
+  ) {
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Success,
+    };
+  }
+
+  if (!isSupabaseEnabled()) {
+    savePlayerName(trimmedName);
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Success,
+    };
+  }
+
+  if (!uid) {
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Unavailable,
+      message: PLAYER_NAME_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  const db = getSupabaseClient();
+  if (!db) {
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Unavailable,
+      message: PLAYER_NAME_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  const claimResult = await claimPlayerName(
+    db,
+    uid,
+    trimmedName,
+    profile,
+  );
+
+  if (claimResult.status === PLAYER_NAME_CLAIM_STATUS.Taken) {
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Taken,
+      message: PLAYER_NAME_TAKEN_MESSAGE,
+    };
+  }
+
+  if (
+    claimResult.status === PLAYER_NAME_CLAIM_STATUS.Error
+    || !claimResult.profile
+  ) {
+    console.error('Failed to validate player name', claimResult.error);
+    return {
+      status: PLAYER_NAME_VALIDATION_STATUS.Unavailable,
+      message: PLAYER_NAME_UNAVAILABLE_MESSAGE,
+    };
+  }
+
+  setCacheProfile(claimResult.profile);
+  saveLocalPlayerName(trimmedName);
+
+  return {
+    status: PLAYER_NAME_VALIDATION_STATUS.Success,
+  };
 }
 
 export function saveSelectedDifficulty(level: DifficultyLevel): void {
@@ -517,12 +809,12 @@ export function saveSelectedDifficulty(level: DifficultyLevel): void {
   saveLocalSelectedDifficulty(level);
 
   const uid = currentUid ?? getCurrentUid();
-  if (!uid || !isFirebaseEnabled()) {
+  if (!uid || !isSupabaseEnabled() || !profile.name.trim()) {
     return;
   }
 
   enqueueTask(async () => {
-    const db = getFirestoreDb();
+    const db = getSupabaseClient();
     if (!db) {
       return;
     }
@@ -541,12 +833,12 @@ export function saveSelectedRecordsLevel(level: DifficultyLevel): void {
   saveLocalSelectedRecordsLevel(level);
 
   const uid = currentUid ?? getCurrentUid();
-  if (!uid || !isFirebaseEnabled()) {
+  if (!uid || !isSupabaseEnabled() || !profile.name.trim()) {
     return;
   }
 
   enqueueTask(async () => {
-    const db = getFirestoreDb();
+    const db = getSupabaseClient();
     if (!db) {
       return;
     }
@@ -555,17 +847,36 @@ export function saveSelectedRecordsLevel(level: DifficultyLevel): void {
   });
 }
 
+export async function signOutCurrentPlayer(): Promise<void> {
+  clearQueueState();
+  currentUid = null;
+  resetStorageCache();
+  clearRecordSyncStatus();
+  clearLocalPlayerName();
+
+  if (!isSupabaseEnabled()) {
+    return;
+  }
+
+  try {
+    await signOutUser();
+  } catch (error) {
+    console.error('Failed to sign out current player', error);
+  }
+}
+
 export function getPersonalBest(
   name: string,
   level: DifficultyLevel,
 ): number {
   const trimmedName = name.trim();
+  const normalizedName = trimmedName.toLowerCase();
   if (!trimmedName) {
     return 0;
   }
 
   const record = (getCacheLeaderboard(level) ?? []).find(
-    (item) => item.name === trimmedName && item.level === level,
+    (item) => item.name.toLowerCase() === normalizedName && item.level === level,
   );
 
   return record?.score ?? 0;
@@ -575,6 +886,10 @@ const inflightLeaderboardFetches = new Map<
   DifficultyLevel,
   Promise<GameRecord[]>
 >();
+
+function invalidateInflightLeaderboard(level: DifficultyLevel): void {
+  inflightLeaderboardFetches.delete(level);
+}
 
 function applyLeaderboardCache(
   level: DifficultyLevel,
@@ -594,7 +909,7 @@ function applyLeaderboardCache(
 async function fetchAndCacheLeaderboard(
   level: DifficultyLevel,
 ): Promise<GameRecord[]> {
-  if (!isFirebaseEnabled()) {
+  if (!isSupabaseEnabled()) {
     return getCacheLeaderboard(level) ?? [];
   }
 
@@ -606,9 +921,9 @@ async function fetchAndCacheLeaderboard(
   const promise = (async () => {
     await waitForAuthReady();
 
-    const db = getFirestoreDb();
+    const db = getSupabaseClient();
     if (!db) {
-      throw new Error('Firestore is not initialized');
+      throw new Error('Supabase client is not initialized');
     }
 
     for (let attempt = 0; attempt < LEADERBOARD_FETCH_ATTEMPTS; attempt += 1) {
@@ -653,45 +968,51 @@ export interface PrepareGameSessionResult {
   errorMessage?: string;
 }
 
+async function ensureAnonymousSessionReady(): Promise<boolean> {
+  if (!isSupabaseEnabled()) {
+    return false;
+  }
+
+  const existingUid = currentUid ?? getCurrentUid();
+  if (existingUid) {
+    return true;
+  }
+
+  try {
+    const anonymousUser = await signInAnonymouslyUser();
+    const uid = anonymousUser?.uid ?? getCurrentUid();
+    if (!uid) {
+      return false;
+    }
+
+    await loadStorageForUser(uid);
+    return true;
+  } catch (error) {
+    console.error('Failed to restore anonymous session for game start', error);
+    return false;
+  }
+}
+
 export async function prepareGameSession(
   level: DifficultyLevel,
 ): Promise<PrepareGameSessionResult> {
-  if (!isFirebaseEnabled()) {
-    return { ok: true };
-  }
-
-  const uid = currentUid ?? getCurrentUid();
-  if (!uid) {
-    return { ok: true };
-  }
-
-  const db = getFirestoreDb();
-  if (!db) {
-    return { ok: false, errorMessage: 'Не удалось подключиться к серверу рекордов.' };
-  }
-
-  try {
-    await startGameSession(db, uid, level);
-  } catch (error) {
-    console.error('Failed to start game session', error);
-    if (isFirestorePermissionError(error)) {
-      return {
-        ok: false,
-        errorMessage: 'Не удалось начать игровую сессию. Проверьте подключение и правила Firestore.',
-      };
-    }
-
+  if (!isSupabaseEnabled()) {
     return {
       ok: false,
-      errorMessage: 'Не удалось начать игровую сессию. Попробуйте позже.',
+      errorMessage: SESSION_PREPARE_ERROR_MESSAGE,
     };
   }
 
-  try {
-    await refreshLeaderboard(level);
-  } catch (error) {
-    console.error('Failed to refresh leaderboard before game', error);
+  if (!(await ensureAnonymousSessionReady())) {
+    return {
+      ok: false,
+      errorMessage: SESSION_PREPARE_ERROR_MESSAGE,
+    };
   }
+
+  void refreshLeaderboard(level).catch((error) => {
+    console.error('Failed to refresh leaderboard before game', error);
+  });
 
   return { ok: true };
 }
@@ -709,12 +1030,23 @@ export function saveRecord(
   score: number,
   gameFrames: number,
 ): void {
-  const trimmedName = name.trim();
-  if (!trimmedName) {
+  void gameFrames;
+
+  const normalizedName = normalizePlayerName(name);
+  if (!normalizedName) {
     setRecordSyncStatus(
       RECORD_SYNC_STATUS.Rejected,
       level,
       'Рекорд не синхронизирован: имя игрока не задано.',
+    );
+    return;
+  }
+
+  if (isPlayerNameTooLong(normalizedName)) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      `Рекорд не синхронизирован: имя длиннее ${MAX_PLAYER_NAME_LENGTH} символов.`,
     );
     return;
   }
@@ -729,38 +1061,13 @@ export function saveRecord(
   }
 
   const uid = currentUid ?? getCurrentUid();
-  const usesFirebase = Boolean(uid && isFirebaseEnabled());
+  const usesRemoteStorage = Boolean(uid && isSupabaseEnabled());
 
-  if (!usesFirebase) {
+  if (!usesRemoteStorage) {
     setRecordSyncStatus(
       RECORD_SYNC_STATUS.Rejected,
       level,
-      'Рекорд не синхронизирован: Firebase недоступен.',
-    );
-    return;
-  }
-
-  const session = getCachedActiveSession();
-  if (!session || session.level !== level) {
-    setRecordSyncStatus(
-      RECORD_SYNC_STATUS.Rejected,
-      level,
-      'Рекорд не синхронизирован: не найдена активная сессия уровня.',
-    );
-    return;
-  }
-
-  const validationFailure = getScoreValidationFailure(
-    score,
-    gameFrames,
-    session.startedAtMs,
-    Date.now(),
-  );
-  if (validationFailure) {
-    setRecordSyncStatus(
-      RECORD_SYNC_STATUS.Rejected,
-      level,
-      getScoreValidationMessage(validationFailure),
+      'Рекорд не синхронизирован: сервер рекордов недоступен.',
     );
     return;
   }
@@ -772,7 +1079,7 @@ export function saveRecord(
   );
 
   enqueueTask(async () => {
-    const db = getFirestoreDb();
+    const db = getSupabaseClient();
     if (!db || !uid) {
       setRecordSyncStatus(
         RECORD_SYNC_STATUS.Rejected,
@@ -787,12 +1094,10 @@ export function saveRecord(
         db,
         uid,
         level,
-        trimmedName,
         score,
-        gameFrames,
       );
 
-      await completeGameSession(db, uid);
+      invalidateInflightLeaderboard(level);
       const records = await fetchAndCacheLeaderboard(level);
       applyLeaderboardCache(level, records);
       setRecordSyncStatus(
@@ -801,12 +1106,12 @@ export function saveRecord(
         'Рекорд синхронизирован с leaderboard.',
       );
     } catch (error) {
-      if (isFirestorePermissionError(error)) {
-        console.warn('Record sync rejected by Firestore rules', error);
+      if (isSupabasePermissionError(error)) {
+        console.warn('Record sync rejected by Supabase RLS', error);
         setRecordSyncStatus(
           RECORD_SYNC_STATUS.Rejected,
           level,
-          'Рекорд отклонён сервером: проверьте имя и условия сессии.',
+          'Рекорд отклонён сервером: проверьте права доступа.',
         );
         return;
       }
@@ -824,7 +1129,7 @@ export function saveRecord(
 export async function refreshLeaderboard(
   level: DifficultyLevel,
 ): Promise<GameRecord[]> {
-  if (!isFirebaseEnabled()) {
+  if (!isSupabaseEnabled()) {
     return getTopRecordsByLevel(level);
   }
 
@@ -836,8 +1141,9 @@ export async function refreshLeaderboard(
   beginLeaderboardLoading();
 
   try {
+    await drainQueueForLeaderboardSync();
+    invalidateInflightLeaderboard(level);
     await fetchAndCacheLeaderboard(level);
-    void processQueue();
   } catch (error) {
     console.error('Failed to refresh leaderboard', error);
   } finally {

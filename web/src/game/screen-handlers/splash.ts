@@ -4,6 +4,23 @@ import type { GameHost } from '../game-host';
 import { GAME_STATES } from '../states';
 import { transitionToState } from '../state-transition';
 
+export function isSplashHoverTarget(host: GameHost, evt: PressEvent): boolean {
+  const point = getCanvasPoint(host.canvas, evt, host.viewport);
+  if (!point) {
+    return false;
+  }
+
+  if (
+    isPointInRect(point, host.playBtn)
+    || isPointInRect(point, host.recordsBtn)
+    || isPointInRect(point, host.settingsBtn)
+  ) {
+    return true;
+  }
+
+  return host.difficultyTabBtns.some((btn) => isPointInRect(point, btn));
+}
+
 export function handleSplashPress(host: GameHost, evt: PressEvent): void {
   const point = getCanvasPoint(host.canvas, evt, host.viewport);
   if (!point) {

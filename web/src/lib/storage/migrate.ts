@@ -1,4 +1,5 @@
-import type { Firestore } from 'firebase/firestore';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { isSupabaseUniqueViolation } from '../supabase/errors';
 import { getLocalPlayerName } from './local';
 import {
   buildProfileFromLocal,
@@ -10,8 +11,8 @@ import {
   type PlayerProfile,
 } from './types';
 
-export async function migrateLocalDataToFirestore(
-  db: Firestore,
+export async function migrateLocalDataToSupabase(
+  db: SupabaseClient,
   uid: string,
 ): Promise<PlayerProfile> {
   const existingProfile = await fetchPlayerProfile(db, uid);
@@ -29,7 +30,15 @@ export async function migrateLocalDataToFirestore(
     return profile;
   }
 
-  await savePlayerProfile(db, uid, profile);
+  try {
+    await savePlayerProfile(db, uid, profile);
+  } catch (error) {
+    if (isSupabaseUniqueViolation(error)) {
+      return buildProfileFromLocal('', createEmptyBests());
+    }
+
+    throw error;
+  }
 
   return profile;
 }

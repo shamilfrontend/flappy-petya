@@ -21,13 +21,8 @@ precacheAndRoute(workboxManifest);
 
 registerRoute(
   ({ url }) =>
-    /^https:\/\/(firestore|identitytoolkit|securetoken)\.googleapis\.com\//.test(
+    /^https:\/\/.*\.supabase\.co\/(rest|auth|storage|functions)\/v1\//.test(
       url.href,
     ),
-  new NetworkOnly(),
-);
-
-registerRoute(
-  ({ url }) => /^https:\/\/.*\.firebaseapp\.com\//.test(url.href),
   new NetworkOnly(),
 );
