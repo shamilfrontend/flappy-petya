@@ -1137,9 +1137,10 @@ export function saveRecord(
     return;
   }
 
+  const normalizedGameFrames = Math.round(gameFrames);
   const validationFailure = getScoreValidationFailure(
     score,
-    gameFrames,
+    normalizedGameFrames,
     sessionStartedAtMs,
     Date.now(),
   );
@@ -1186,7 +1187,7 @@ export function saveRecord(
         db,
         level,
         score,
-        gameFrames,
+        normalizedGameFrames,
       );
 
       delete sessionStartedAtByLevel[level];

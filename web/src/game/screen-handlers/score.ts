@@ -37,5 +37,5 @@ export function handleScorePress(host: GameHost, evt: PressEvent): void {
     return;
   }
 
-  void beginGame(host, host.playerName, { skipSessionPrepare: true });
+  void beginGame(host, host.playerName);
 }

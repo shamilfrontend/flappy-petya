@@ -165,10 +165,12 @@ export async function submitLeaderboardScore(
     return;
   }
 
+  const normalizedGameFrames = Math.round(gameFrames);
+
   const { error } = await db.rpc('submit_leaderboard_score', {
     p_level: level,
     p_score: score,
-    p_game_frames: gameFrames,
+    p_game_frames: normalizedGameFrames,
   });
 
   if (error) {

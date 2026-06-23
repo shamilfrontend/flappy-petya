@@ -114,7 +114,7 @@ $$;
 create or replace function public.submit_leaderboard_score(
   p_level text,
   p_score integer,
-  p_game_frames integer
+  p_game_frames double precision
 )
 returns void
 language plpgsql
@@ -127,6 +127,7 @@ declare
   v_elapsed_ms bigint;
   v_current_score integer := 0;
   v_next_score integer;
+  v_game_frames integer := round(p_game_frames)::integer;
 begin
   if v_uid is null then
     raise exception 'not authenticated';
@@ -140,8 +141,8 @@ begin
     raise exception 'invalid score';
   end if;
 
-  if p_game_frames < public.fp_min_game_frames(p_score)
-    or p_game_frames > public.fp_max_game_frames(p_score) then
+  if v_game_frames < public.fp_min_game_frames(p_score)
+    or v_game_frames > public.fp_max_game_frames(p_score) then
     raise exception 'invalid game frames';
   end if;
 
@@ -243,5 +244,5 @@ grant select, insert, update on public.players to authenticated;
 grant select on public.leaderboard_scores to authenticated;
 grant select on public.game_sessions to authenticated;
 grant execute on function public.start_game_session(text) to authenticated;
-grant execute on function public.submit_leaderboard_score(text, integer, integer)
+grant execute on function public.submit_leaderboard_score(text, integer, double precision)
   to authenticated;
