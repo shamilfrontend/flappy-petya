@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import { VitePWA } from 'vite-plugin-pwa';
 
 const isNativeBuild = process.env.VITE_BUILD_TARGET === 'android'
@@ -8,6 +8,9 @@ const base = isNativeBuild ? './' : '/flappy-petya/';
 export default defineConfig({
   base,
   publicDir: 'public',
+  test: {
+    environment: 'node',
+  },
   plugins: [
     VitePWA({
       strategies: 'injectManifest',

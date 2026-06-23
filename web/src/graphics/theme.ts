@@ -151,53 +151,97 @@ function lerpPalette(from: Palette, to: Palette, t: number): Palette {
   return result;
 }
 
-/** Очки, при которых окружение полностью переходит к следующему пресету. */
-const DUSK_SCORE = 15;
-const NIGHT_SCORE = 30;
+/** Длительность стабильной фазы и перехода между фазами (в очках). */
+const SEGMENT_LENGTH = 10;
+const SEGMENT_COUNT = 8;
+const CYCLE_LENGTH = SEGMENT_LENGTH * SEGMENT_COUNT;
 const paletteCache = new Map<number, Palette>();
 
-/** Возвращает палитру окружения для текущего счёта с плавным переходом. */
+interface HoldSegment {
+  type: 'hold';
+  palette: Palette;
+  nightFactor: number;
+}
+
+interface TransitionSegment {
+  type: 'transition';
+  from: Palette;
+  to: Palette;
+  nightFrom: number;
+  nightTo: number;
+}
+
+type CycleSegment = HoldSegment | TransitionSegment;
+
+/**
+ * Цикл: удержание → переход → удержание → …
+ * 0–10 день, 10–20 день→закат, 20–30 закат, 30–40 закат→ночь,
+ * 40–50 ночь, 50–60 ночь→рассвет, 60–70 рассвет, 70–80 рассвет→день.
+ */
+const CYCLE_SEGMENTS: CycleSegment[] = [
+  { type: 'hold', palette: DAY, nightFactor: 0 },
+  { type: 'transition', from: DAY, to: DUSK, nightFrom: 0, nightTo: 0.5 },
+  { type: 'hold', palette: DUSK, nightFactor: 0.5 },
+  { type: 'transition', from: DUSK, to: NIGHT, nightFrom: 0.5, nightTo: 1 },
+  { type: 'hold', palette: NIGHT, nightFactor: 1 },
+  { type: 'transition', from: NIGHT, to: DUSK, nightFrom: 1, nightTo: 0.5 },
+  { type: 'hold', palette: DUSK, nightFactor: 0.5 },
+  { type: 'transition', from: DUSK, to: DAY, nightFrom: 0.5, nightTo: 0 },
+];
+
+function getCyclePosition(score: number): number {
+  return Math.max(0, Math.trunc(score)) % CYCLE_LENGTH;
+}
+
+function getSegmentLocalT(position: number): number {
+  const offset = position % SEGMENT_LENGTH;
+  if (SEGMENT_LENGTH <= 1) {
+    return 0;
+  }
+
+  return offset / (SEGMENT_LENGTH - 1);
+}
+
+function paletteForPosition(position: number): Palette {
+  const segmentIndex = Math.floor(position / SEGMENT_LENGTH);
+  const segment = CYCLE_SEGMENTS[segmentIndex];
+  const localT = getSegmentLocalT(position);
+
+  if (segment.type === 'hold') {
+    return segment.palette;
+  }
+
+  return lerpPalette(segment.from, segment.to, localT);
+}
+
+function nightFactorForPosition(position: number): number {
+  const segmentIndex = Math.floor(position / SEGMENT_LENGTH);
+  const segment = CYCLE_SEGMENTS[segmentIndex];
+  const localT = getSegmentLocalT(position);
+
+  if (segment.type === 'hold') {
+    return segment.nightFactor;
+  }
+
+  return segment.nightFrom + (segment.nightTo - segment.nightFrom) * localT;
+}
+
+/** Возвращает палитру окружения для текущего счёта с плавным циклическим переходом. */
 export function getPalette(score: number): Palette {
-  const normalizedScore = Math.max(0, Math.trunc(score));
-  const cached = paletteCache.get(normalizedScore);
+  const position = getCyclePosition(score);
+  const cached = paletteCache.get(position);
   if (cached) {
     return cached;
   }
 
-  if (normalizedScore <= 0) {
-    return DAY;
-  }
-
-  if (normalizedScore < DUSK_SCORE) {
-    const palette = lerpPalette(DAY, DUSK, normalizedScore / DUSK_SCORE);
-    paletteCache.set(normalizedScore, palette);
-    return palette;
-  }
-
-  if (normalizedScore < NIGHT_SCORE) {
-    const palette = lerpPalette(
-      DUSK,
-      NIGHT,
-      (normalizedScore - DUSK_SCORE) / (NIGHT_SCORE - DUSK_SCORE),
-    );
-    paletteCache.set(normalizedScore, palette);
-    return palette;
-  }
-
-  return NIGHT;
+  const palette = paletteForPosition(position);
+  paletteCache.set(position, palette);
+  return palette;
 }
 
 /** Степень «ночи» от 0 (день) до 1 (ночь) для прозрачности небесных тел и атмосферы. */
 export function getNightFactor(score: number): number {
-  if (score <= DUSK_SCORE) {
-    return 0;
-  }
-
-  if (score >= NIGHT_SCORE) {
-    return 1;
-  }
-
-  return (score - DUSK_SCORE) / (NIGHT_SCORE - DUSK_SCORE);
+  return nightFactorForPosition(getCyclePosition(score));
 }
 
 export const DEFAULT_PALETTE = DAY;
