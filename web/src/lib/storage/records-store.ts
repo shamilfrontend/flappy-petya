@@ -136,44 +136,43 @@ export async function fetchLeaderboard(
   return mapLeaderboardRows(rows, level, maxEntries);
 }
 
-export async function upsertLeaderboardEntry(
+export async function startGameSession(
   db: SupabaseClient,
-  uid: string,
+  level: DifficultyLevel,
+): Promise<string> {
+  const { data, error } = await db.rpc('start_game_session', {
+    p_level: level,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  if (typeof data !== 'string' || !data) {
+    throw new Error('start_game_session returned empty started_at');
+  }
+
+  return data;
+}
+
+export async function submitLeaderboardScore(
+  db: SupabaseClient,
   level: DifficultyLevel,
   score: number,
+  gameFrames: number,
 ): Promise<void> {
   if (score <= 0) {
     return;
   }
 
-  const { data: currentData, error: readError } = await db
-    .from('leaderboard_scores')
-    .select('score')
-    .eq('user_id', uid)
-    .eq('level', level)
-    .maybeSingle();
+  const { error } = await db.rpc('submit_leaderboard_score', {
+    p_level: level,
+    p_score: score,
+    p_game_frames: gameFrames,
+  });
 
-  if (readError) {
-    throw readError;
-  }
-
-  const currentScore = currentData?.score ? Number(currentData.score) : 0;
-  const nextScore = Math.max(currentScore, score);
-  if (nextScore <= 0) {
-    return;
-  }
-
-  const { error: upsertError } = await db
-    .from('leaderboard_scores')
-    .upsert({
-      user_id: uid,
-      level,
-      score: nextScore,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'level,user_id' });
-
-  if (upsertError) {
-    throw upsertError;
+  if (error) {
+    throw error;
   }
 }
 

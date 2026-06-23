@@ -114,18 +114,23 @@ npm run lint -w flappy-petya-web
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-SQL схема и RLS политики лежат в `supabase/schema.sql`.
+SQL схема и RLS политики лежат в `supabase/schema.sql`. Миграции — в `supabase/migrations/`.
+
+После обновления кода примените новые миграции в Supabase (SQL Editor или `supabase db push`).
 
 ### Схема данных
 
-Используется минимальная структура из двух таблиц:
+Используется структура из трёх таблиц:
 
 1. `players` — `user_id`, `name`.
 2. `leaderboard_scores` — `user_id`, `level`, `score`.
+3. `game_sessions` — активная игровая сессия на уровень (`started_at`, `status`).
+
+Запись в `leaderboard_scores` возможна **только** через RPC `submit_leaderboard_score` (прямой upsert из клиента заблокирован). Перед игрой клиент вызывает `start_game_session`, после — отправляет `score` и `game_frames` на серверную валидацию.
 
 Имя игрока уникально глобально (без учёта регистра), один игрок имеет один рекорд на уровень.
 
-Подозрительные записи можно удалять в панели Supabase в таблице `leaderboard_scores`.
+Подозрительные записи можно удалять в панели Supabase в таблице `leaderboard_scores` (например, накрученные до применения миграции).
 
 ### Anonymous Auth
 

@@ -41,9 +41,15 @@ import {
 } from './player-store';
 import {
   fetchLeaderboard,
-  upsertLeaderboardEntry,
+  startGameSession,
+  submitLeaderboardScore,
 } from './records-store';
-import { isValidScoreValue } from './score-validation';
+import {
+  getScoreValidationFailure,
+  isValidScoreValue,
+  SCORE_VALIDATION_FAILURES,
+  type ScoreValidationFailureReason,
+} from './score-validation';
 import {
   createDefaultProfile,
   MAX_PLAYER_NAME_LENGTH,
@@ -83,6 +89,48 @@ const QUEUE_RETRY_MAX_MS = 30000;
 const pendingTasks: StorageTask[] = [];
 let isProcessingQueue = false;
 let currentUid: string | null = null;
+const sessionStartedAtByLevel: Partial<Record<DifficultyLevel, number>> = {};
+
+function clearGameSessionState(): void {
+  for (const level of Object.keys(sessionStartedAtByLevel) as DifficultyLevel[]) {
+    delete sessionStartedAtByLevel[level];
+  }
+}
+
+function getScoreValidationErrorMessage(
+  reason: ScoreValidationFailureReason,
+): string {
+  switch (reason) {
+    case SCORE_VALIDATION_FAILURES.InvalidGameFrames:
+      return 'Рекорд не синхронизирован: некорректная длительность игры.';
+    case SCORE_VALIDATION_FAILURES.MinWallClockNotReached:
+      return 'Рекорд не синхронизирован: недостаточное время игры.';
+    default:
+      return 'Рекорд не синхронизирован: некорректное значение очков.';
+  }
+}
+
+function getSubmitScoreErrorMessage(error: unknown): string {
+  const message = `${(error as { message?: string }).message ?? ''}`.toLowerCase();
+
+  if (message.includes('no active game session')) {
+    return 'Рекорд не синхронизирован: игровая сессия не найдена.';
+  }
+
+  if (message.includes('invalid game frames')) {
+    return 'Рекорд не синхронизирован: некорректная длительность игры.';
+  }
+
+  if (message.includes('min play time not reached')) {
+    return 'Рекорд не синхронизирован: недостаточное время игры.';
+  }
+
+  if (isSupabasePermissionError(error)) {
+    return 'Рекорд отклонён сервером: проверьте права доступа.';
+  }
+
+  return 'Рекорд не синхронизирован: сервер отклонил результат.';
+}
 let queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let queueRetryAttempt = 0;
 let isRecoveringAuthSession = false;
@@ -341,6 +389,7 @@ async function clearStaleAuthSession(): Promise<void> {
   try {
     clearQueueState();
     currentUid = null;
+    clearGameSessionState();
     resetStorageCache();
     clearLocalPlayerName();
     await signOutUser();
@@ -850,6 +899,7 @@ export function saveSelectedRecordsLevel(level: DifficultyLevel): void {
 export async function signOutCurrentPlayer(): Promise<void> {
   clearQueueState();
   currentUid = null;
+  clearGameSessionState();
   resetStorageCache();
   clearRecordSyncStatus();
   clearLocalPlayerName();
@@ -1014,6 +1064,25 @@ export async function prepareGameSession(
     console.error('Failed to refresh leaderboard before game', error);
   });
 
+  const db = getSupabaseClient();
+  if (!db) {
+    return {
+      ok: false,
+      errorMessage: SESSION_PREPARE_ERROR_MESSAGE,
+    };
+  }
+
+  try {
+    const startedAt = await startGameSession(db, level);
+    sessionStartedAtByLevel[level] = new Date(startedAt).getTime();
+  } catch (error) {
+    console.error('Failed to start game session', error);
+    return {
+      ok: false,
+      errorMessage: SESSION_PREPARE_ERROR_MESSAGE,
+    };
+  }
+
   return { ok: true };
 }
 
@@ -1030,8 +1099,6 @@ export function saveRecord(
   score: number,
   gameFrames: number,
 ): void {
-  void gameFrames;
-
   const normalizedName = normalizePlayerName(name);
   if (!normalizedName) {
     setRecordSyncStatus(
@@ -1056,6 +1123,31 @@ export function saveRecord(
       RECORD_SYNC_STATUS.Rejected,
       level,
       'Рекорд не синхронизирован: некорректное значение очков.',
+    );
+    return;
+  }
+
+  const sessionStartedAtMs = sessionStartedAtByLevel[level];
+  if (!sessionStartedAtMs) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      'Рекорд не синхронизирован: игровая сессия не найдена.',
+    );
+    return;
+  }
+
+  const validationFailure = getScoreValidationFailure(
+    score,
+    gameFrames,
+    sessionStartedAtMs,
+    Date.now(),
+  );
+  if (validationFailure) {
+    setRecordSyncStatus(
+      RECORD_SYNC_STATUS.Rejected,
+      level,
+      getScoreValidationErrorMessage(validationFailure),
     );
     return;
   }
@@ -1090,12 +1182,14 @@ export function saveRecord(
     }
 
     try {
-      await upsertLeaderboardEntry(
+      await submitLeaderboardScore(
         db,
-        uid,
         level,
         score,
+        gameFrames,
       );
+
+      delete sessionStartedAtByLevel[level];
 
       invalidateInflightLeaderboard(level);
       const records = await fetchAndCacheLeaderboard(level);
@@ -1108,20 +1202,15 @@ export function saveRecord(
     } catch (error) {
       if (isSupabasePermissionError(error)) {
         console.warn('Record sync rejected by Supabase RLS', error);
-        setRecordSyncStatus(
-          RECORD_SYNC_STATUS.Rejected,
-          level,
-          'Рекорд отклонён сервером: проверьте права доступа.',
-        );
-        return;
+      } else {
+        console.warn('Record sync rejected by server validation', error);
       }
 
       setRecordSyncStatus(
-        RECORD_SYNC_STATUS.Pending,
+        RECORD_SYNC_STATUS.Rejected,
         level,
-        'Синхронизация временно недоступна, повторим автоматически...',
+        getSubmitScoreErrorMessage(error),
       );
-      throw error;
     }
   });
 }

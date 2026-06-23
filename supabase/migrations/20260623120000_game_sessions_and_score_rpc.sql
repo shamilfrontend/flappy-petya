@@ -1,27 +1,5 @@
--- Flappy Petya: players, leaderboard, game sessions + score RPCs.
-
-create table if not exists public.players (
-  user_id uuid primary key references auth.users (id) on delete cascade,
-  name text not null check (char_length(trim(name)) between 1 and 24),
-  updated_at timestamptz not null default now()
-);
-
-create unique index if not exists players_name_ci_unique_idx
-  on public.players ((lower(trim(name))));
-
-create table if not exists public.leaderboard_scores (
-  level text not null check (level in ('easy', 'medium', 'hard')),
-  user_id uuid not null references public.players (user_id) on delete cascade,
-  score integer not null check (score between 1 and 9999),
-  updated_at timestamptz not null default now(),
-  primary key (level, user_id)
-);
-
-create index if not exists leaderboard_scores_level_score_idx
-  on public.leaderboard_scores (level, score desc);
-
-create index if not exists leaderboard_scores_user_id_idx
-  on public.leaderboard_scores (user_id);
+-- Game sessions + server-side score validation via RPC.
+-- Direct INSERT/UPDATE on leaderboard_scores is revoked for clients.
 
 create table if not exists public.game_sessions (
   id uuid primary key default gen_random_uuid(),
@@ -36,8 +14,6 @@ create table if not exists public.game_sessions (
 create index if not exists game_sessions_user_level_status_idx
   on public.game_sessions (user_id, level, status);
 
-alter table public.players enable row level security;
-alter table public.leaderboard_scores enable row level security;
 alter table public.game_sessions enable row level security;
 
 create or replace function public.fp_min_game_frames(p_score integer)
@@ -193,55 +169,17 @@ begin
 end;
 $$;
 
-create policy players_select_own
-on public.players
-for select
-to authenticated
-using ((select auth.uid()) = user_id);
-
-create policy players_select_for_leaderboard
-on public.players
-for select
-to anon, authenticated
-using (
-  exists (
-    select 1
-    from public.leaderboard_scores ls
-    where ls.user_id = players.user_id
-  )
-);
-
-create policy players_insert_own
-on public.players
-for insert
-to authenticated
-with check ((select auth.uid()) = user_id);
-
-create policy players_update_own
-on public.players
-for update
-to authenticated
-using ((select auth.uid()) = user_id)
-with check ((select auth.uid()) = user_id);
-
-create policy leaderboard_scores_select_public
-on public.leaderboard_scores
-for select
-to anon, authenticated
-using (true);
-
 create policy game_sessions_select_own
 on public.game_sessions
 for select
 to authenticated
 using ((select auth.uid()) = user_id);
 
-grant usage on schema public to anon, authenticated;
-grant select on public.leaderboard_scores to anon;
-grant select on public.players to anon;
-grant select, insert, update on public.players to authenticated;
-grant select on public.leaderboard_scores to authenticated;
-grant select on public.game_sessions to authenticated;
+drop policy if exists leaderboard_scores_insert_own on public.leaderboard_scores;
+drop policy if exists leaderboard_scores_update_own on public.leaderboard_scores;
+
+revoke insert, update on public.leaderboard_scores from authenticated;
+
 grant execute on function public.start_game_session(text) to authenticated;
 grant execute on function public.submit_leaderboard_score(text, integer, integer)
   to authenticated;
