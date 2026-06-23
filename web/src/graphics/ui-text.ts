@@ -1,4 +1,3 @@
-import { MEDAL_COLORS, MEDAL_LABELS, MEDAL_TYPES, type MedalType } from '../game/medals';
 import { SCORE_UI_ANIM_DURATION } from '../game/config';
 import { THEME } from './theme';
 import { TOP_RECORDS_PER_LEVEL, type GameRecord } from '../lib/records';
@@ -336,78 +335,7 @@ export function drawGameOverImage(
 }
 
 export interface ScorePanelOptions {
-  medal?: MedalType;
   uiTimer?: number;
-}
-
-function drawMedalIcon(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  medal: Exclude<MedalType, 'none'>,
-  uiTimer: number,
-): void {
-  const entrance = Math.min(1, uiTimer / 18);
-  const scale = 0.4 + 0.6 * entrance;
-  const shimmer = 0.75 + 0.25 * Math.sin(uiTimer / 7);
-  const color = MEDAL_COLORS[medal];
-  const radius = 14;
-
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(scale, scale);
-
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 8 * shimmer;
-  ctx.fillStyle = color;
-  ctx.strokeStyle = THEME.outline;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(0, 0, radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = `rgba(255, 255, 255, ${0.35 * shimmer})`;
-  ctx.beginPath();
-  ctx.ellipse(-4, -5, 5, 3, -0.4, 0, Math.PI * 2);
-  ctx.fill();
-
-  if (medal === MEDAL_TYPES.Gold) {
-    drawGoldMedalStarTrail(ctx, uiTimer, entrance);
-  }
-
-  ctx.restore();
-}
-
-/** Звёздный след вокруг золотой медали. */
-function drawGoldMedalStarTrail(
-  ctx: CanvasRenderingContext2D,
-  uiTimer: number,
-  entrance: number,
-): void {
-  const starCount = 8;
-
-  for (let trail = 0; trail < 4; trail++) {
-    const trailFade = 1 - trail * 0.22;
-
-    for (let i = 0; i < starCount; i++) {
-      const angle = (i / starCount) * Math.PI * 2 + (uiTimer - trail * 4) * 0.12;
-      const dist = 20 + trail * 5 + 4 * Math.sin(uiTimer / 6 + i);
-      const alpha = trailFade * (0.45 + 0.55 * Math.sin(uiTimer / 5 + i * 0.9)) * entrance;
-      const size = 2.4 - trail * 0.35;
-
-      ctx.fillStyle = `rgba(255, 230, 100, ${alpha})`;
-      ctx.beginPath();
-      ctx.arc(
-        Math.cos(angle) * dist,
-        Math.sin(angle) * dist,
-        size,
-        0,
-        Math.PI * 2,
-      );
-      ctx.fill();
-    }
-  }
 }
 
 export function drawScorePanel(
@@ -418,10 +346,8 @@ export function drawScorePanel(
   y: number,
   options: ScorePanelOptions = {},
 ): { width: number; height: number } {
-  const medal = options.medal ?? MEDAL_TYPES.None;
-  const hasMedal = medal !== MEDAL_TYPES.None;
   const panelW = 200;
-  const panelH = hasMedal ? 118 : 90;
+  const panelH = 90;
   const panelX = centerX - panelW / 2;
   const panelY = y - panelH / 2;
   const uiTimer = options.uiTimer ?? 0;
@@ -446,7 +372,6 @@ export function drawScorePanel(
   const valueFont = 'bold 22px system-ui, sans-serif';
   const row1Y = panelY + 30;
   const row2Y = panelY + 62;
-  const row3Y = panelY + 94;
 
   ctx.font = labelFont;
   ctx.fillStyle = THEME.outline;
@@ -455,21 +380,10 @@ export function drawScorePanel(
   ctx.fillText('Счёт', panelX + 20, row1Y);
   ctx.fillText('Рекорд', panelX + 20, row2Y);
 
-  if (hasMedal) {
-    ctx.fillText('Медаль', panelX + 20, row3Y);
-  }
-
   ctx.font = valueFont;
   ctx.textAlign = 'right';
   ctx.fillText(score.toString(), panelX + panelW - 20, row1Y);
   ctx.fillText(best.toString(), panelX + panelW - 20, row2Y);
-
-  if (hasMedal) {
-    ctx.font = 'bold 18px system-ui, sans-serif';
-    const medalX = panelX + panelW - 52;
-    drawMedalIcon(ctx, medalX, row3Y, medal, uiTimer);
-    ctx.fillText(MEDAL_LABELS[medal], panelX + panelW - 20, row3Y);
-  }
 
   ctx.restore();
 

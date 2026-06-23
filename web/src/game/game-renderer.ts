@@ -45,7 +45,6 @@ import {
 } from './config';
 import { DIFFICULTIES } from './difficulty';
 import type { GameHost } from './game-host';
-import { getMedal } from './medals';
 import { GAME_STATES } from './states';
 
 const SCORE_HOME_BUTTON_LABEL = 'На главную';
@@ -244,7 +243,7 @@ export function renderGame(host: GameHost): void {
         host.levelTopScore,
         centerX,
         scoreLayout.panelY,
-        { medal: getMedal(host.score), uiTimer: host.scoreUiTimer },
+        { uiTimer: host.scoreUiTimer },
       );
       const retryDelay = 6;
       const retryEntrance = Math.max(
