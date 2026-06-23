@@ -378,7 +378,9 @@ async function loadAllLeaderboards(): Promise<void> {
 
   try {
     const levels: DifficultyLevel[] = ['easy', 'medium', 'hard'];
-    await Promise.all(levels.map((level) => fetchAndCacheLeaderboard(level)));
+    for (const level of levels) {
+      await fetchAndCacheLeaderboard(level);
+    }
   } catch (error) {
     console.error('Failed to load leaderboards', error);
   } finally {
@@ -417,7 +419,7 @@ async function clearStaleAuthSession(): Promise<void> {
   }
 }
 
-async function loadStorageForUser(uid: string): Promise<void> {
+async function syncPlayerProfileForUser(uid: string): Promise<void> {
   currentUid = uid;
 
   const db = getSupabaseClient();
@@ -425,40 +427,50 @@ async function loadStorageForUser(uid: string): Promise<void> {
     return;
   }
 
+  let profile = await fetchPlayerProfile(db, uid);
+  if (!profile) {
+    profile = createDefaultProfile();
+  }
+
+  const localSelectedDifficulty = getLocalSelectedDifficulty();
+  const localSelectedRecordsLevel = getLocalSelectedRecordsLevel();
+
+  if (localSelectedDifficulty && !profile.selectedDifficulty) {
+    profile = {
+      ...profile,
+      selectedDifficulty: localSelectedDifficulty,
+    };
+  }
+
+  if (localSelectedRecordsLevel && !profile.selectedRecordsLevel) {
+    profile = {
+      ...profile,
+      selectedRecordsLevel: localSelectedRecordsLevel,
+    };
+  }
+
+  if (profile.selectedDifficulty) {
+    saveLocalSelectedDifficulty(profile.selectedDifficulty);
+  }
+
+  if (profile.selectedRecordsLevel) {
+    saveLocalSelectedRecordsLevel(profile.selectedRecordsLevel);
+  }
+
+  setCacheProfile(profile);
+}
+
+function scheduleBackgroundStorageSync(): void {
+  void loadAllLeaderboards().catch((error) => {
+    console.error('Failed to load leaderboards in background', error);
+  });
+  void processQueue();
+}
+
+async function loadStorageForUser(uid: string): Promise<void> {
   try {
-    let profile = await fetchPlayerProfile(db, uid);
-    if (!profile) {
-      profile = createDefaultProfile();
-    }
-
-    const localSelectedDifficulty = getLocalSelectedDifficulty();
-    const localSelectedRecordsLevel = getLocalSelectedRecordsLevel();
-
-    if (localSelectedDifficulty && !profile.selectedDifficulty) {
-      profile = {
-        ...profile,
-        selectedDifficulty: localSelectedDifficulty,
-      };
-    }
-
-    if (localSelectedRecordsLevel && !profile.selectedRecordsLevel) {
-      profile = {
-        ...profile,
-        selectedRecordsLevel: localSelectedRecordsLevel,
-      };
-    }
-
-    if (profile.selectedDifficulty) {
-      saveLocalSelectedDifficulty(profile.selectedDifficulty);
-    }
-
-    if (profile.selectedRecordsLevel) {
-      saveLocalSelectedRecordsLevel(profile.selectedRecordsLevel);
-    }
-
-    setCacheProfile(profile);
-    await loadAllLeaderboards();
-    void processQueue();
+    await syncPlayerProfileForUser(uid);
+    scheduleBackgroundStorageSync();
   } catch (error) {
     if (isSupabasePermissionError(error)) {
       console.warn(
@@ -1087,7 +1099,10 @@ async function fetchAndCacheLeaderboard(
     }
 
     for (let attempt = 0; attempt < LEADERBOARD_FETCH_ATTEMPTS; attempt += 1) {
-      const records = await fetchLeaderboard(db, level);
+      const records = await withTimeout(
+        fetchLeaderboard(db, level),
+        NETWORK_TIMEOUT_MS,
+      );
       const cachedRecords = applyLeaderboardCache(level, records);
 
       if (cachedRecords.length > 0) {
@@ -1152,7 +1167,8 @@ async function ensureAnonymousSessionReady(): Promise<boolean> {
     if (session?.user?.id) {
       const uid = session.user.id;
       if (currentUid !== uid) {
-        await withTimeout(loadStorageForUser(uid), NETWORK_TIMEOUT_MS);
+        await withTimeout(syncPlayerProfileForUser(uid), NETWORK_TIMEOUT_MS);
+        scheduleBackgroundStorageSync();
       }
       return true;
     }
@@ -1166,7 +1182,8 @@ async function ensureAnonymousSessionReady(): Promise<boolean> {
       return false;
     }
 
-    await withTimeout(loadStorageForUser(uid), NETWORK_TIMEOUT_MS);
+    await withTimeout(syncPlayerProfileForUser(uid), NETWORK_TIMEOUT_MS);
+    scheduleBackgroundStorageSync();
     return true;
   } catch (error) {
     if (isTimeoutError(error)) {

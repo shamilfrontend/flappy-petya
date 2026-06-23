@@ -231,6 +231,17 @@ for select
 to anon, authenticated
 using (true);
 
+create or replace view public.leaderboard_entries
+with (security_invoker = false) as
+select
+  ls.level,
+  ls.user_id,
+  ls.score,
+  ls.updated_at,
+  p.name as player_name
+from public.leaderboard_scores ls
+join public.players p on p.user_id = ls.user_id;
+
 drop policy if exists game_sessions_select_own on public.game_sessions;
 
 create policy game_sessions_select_own
@@ -241,6 +252,7 @@ using ((select auth.uid()) = user_id);
 
 grant usage on schema public to anon, authenticated;
 grant select on public.leaderboard_scores to anon;
+grant select on public.leaderboard_entries to anon, authenticated;
 grant select on public.players to anon;
 grant select, insert, update on public.players to authenticated;
 grant select on public.leaderboard_scores to authenticated;

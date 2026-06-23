@@ -50,16 +50,9 @@ export async function fetchPlayerLeaderboardScores(
   return bests;
 }
 
-interface LeaderboardScoreRow {
+interface LeaderboardEntryRow {
   user_id: string | null;
-  players?:
-    | {
-      name: string | null;
-    }
-    | Array<{
-      name: string | null;
-    }>
-    | null;
+  player_name: string | null;
   score: number | null;
 }
 
@@ -76,27 +69,14 @@ function fallbackPlayerName(userId: string | null | undefined): string {
   return `Игрок ${trimmedUserId.slice(0, 8)}`;
 }
 
-function resolvePlayerName(players: LeaderboardScoreRow['players']): string {
-  if (!players) {
-    return '';
-  }
-
-  if (Array.isArray(players)) {
-    const firstPlayer = players[0];
-    return (firstPlayer?.name ?? '').trim();
-  }
-
-  return (players.name ?? '').trim();
-}
-
 function mapLeaderboardRows(
-  rows: Partial<LeaderboardScoreRow>[],
+  rows: Partial<LeaderboardEntryRow>[],
   level: DifficultyLevel,
   maxEntries: number,
 ): GameRecord[] {
   const records = rows
     .map((item) => {
-      const playerName = resolvePlayerName(item.players)
+      const playerName = (item.player_name ?? '').trim()
         || fallbackPlayerName(item.user_id);
       const normalizedScore = Number(item.score);
       if (!playerName || !Number.isFinite(normalizedScore)) {
@@ -122,8 +102,8 @@ export async function fetchLeaderboard(
   const fetchLimit = Math.max(maxEntries * LEADERBOARD_FETCH_BUFFER, maxEntries);
 
   const { data, error } = await db
-    .from('leaderboard_scores')
-    .select('user_id, score, players(name)')
+    .from('leaderboard_entries')
+    .select('user_id, score, player_name')
     .eq('level', level)
     .order('score', { ascending: false })
     .limit(fetchLimit);
@@ -132,7 +112,7 @@ export async function fetchLeaderboard(
     throw error;
   }
 
-  const rows = (data ?? []) as unknown as Partial<LeaderboardScoreRow>[];
+  const rows = (data ?? []) as unknown as Partial<LeaderboardEntryRow>[];
   return mapLeaderboardRows(rows, level, maxEntries);
 }
 
