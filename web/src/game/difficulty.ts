@@ -1,6 +1,5 @@
 import {
   FG_SCROLL_SPEED,
-  PIPE_GAP,
   PIPE_SPEED,
 } from './config';
 
@@ -25,21 +24,21 @@ export const DIFFICULTIES: DifficultySettings[] = [
   {
     id: DIFFICULTY_LEVELS.Easy,
     label: 'Легкий',
-    pipeGap: 145,
+    pipeGap: 140,
     pipeSpeed: PIPE_SPEED * 0.74,
     fgScrollSpeed: FG_SCROLL_SPEED * 0.74,
   },
   {
     id: DIFFICULTY_LEVELS.Medium,
     label: 'Средний',
-    pipeGap: 122,
+    pipeGap: 120,
     pipeSpeed: PIPE_SPEED * 0.84,
     fgScrollSpeed: FG_SCROLL_SPEED * 0.84,
   },
   {
     id: DIFFICULTY_LEVELS.Hard,
     label: 'Сложный',
-    pipeGap: PIPE_GAP - 4,
+    pipeGap: 100,
     pipeSpeed: PIPE_SPEED * 0.96,
     fgScrollSpeed: FG_SCROLL_SPEED * 0.96,
   },
