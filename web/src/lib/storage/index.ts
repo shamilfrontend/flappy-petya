@@ -13,6 +13,12 @@ import {
 } from '../supabase/auth';
 import { isSupabasePermissionError } from '../supabase/errors';
 import {
+  isTimeoutError,
+  NETWORK_TIMEOUT_ERROR_MESSAGE,
+  NETWORK_TIMEOUT_MS,
+  withTimeout,
+} from '../with-timeout';
+import {
   clearLeaderboardCache,
   getCacheLeaderboard,
   getCacheProfile,
@@ -63,6 +69,8 @@ export {
   TOP_RECORDS_PER_LEVEL,
   type GameRecord,
 } from './types';
+
+export { NETWORK_TIMEOUT_ERROR_MESSAGE } from '../with-timeout';
 
 type StorageTask = () => Promise<void>;
 
@@ -505,6 +513,10 @@ export async function initStorage(): Promise<void> {
 
     if (uid) {
       await loadStorageForUser(uid);
+
+      if (!getSavedPlayerName().trim()) {
+        await ensureRandomPlayerNameForSession();
+      }
     }
   } catch (error) {
     console.error('Storage initialization failed', error);
@@ -742,7 +754,10 @@ export async function ensureRandomPlayerNameForSession(): Promise<string | null>
 
   for (let attempt = 0; attempt < RANDOM_NAME_CLAIM_ATTEMPTS; attempt += 1) {
     const candidate = buildRandomAnonymousName();
-    const claimResult = await claimPlayerName(db, uid, candidate, getCacheProfile());
+    const claimResult = await withTimeout(
+      claimPlayerName(db, uid, candidate, getCacheProfile()),
+      NETWORK_TIMEOUT_MS,
+    );
 
     if (
       claimResult.status === PLAYER_NAME_CLAIM_STATUS.Success
@@ -815,11 +830,14 @@ export async function validatePlayerNameForStart(
     };
   }
 
-  const claimResult = await claimPlayerName(
-    db,
-    uid,
-    trimmedName,
-    profile,
+  const claimResult = await withTimeout(
+    claimPlayerName(
+      db,
+      uid,
+      trimmedName,
+      profile,
+    ),
+    NETWORK_TIMEOUT_MS,
   );
 
   if (claimResult.status === PLAYER_NAME_CLAIM_STATUS.Taken) {
@@ -1029,15 +1047,23 @@ async function ensureAnonymousSessionReady(): Promise<boolean> {
   }
 
   try {
-    const anonymousUser = await signInAnonymouslyUser();
+    const anonymousUser = await withTimeout(
+      signInAnonymouslyUser(),
+      NETWORK_TIMEOUT_MS,
+    );
     const uid = anonymousUser?.uid ?? getCurrentUid();
     if (!uid) {
       return false;
     }
 
-    await loadStorageForUser(uid);
+    await withTimeout(loadStorageForUser(uid), NETWORK_TIMEOUT_MS);
     return true;
   } catch (error) {
+    if (isTimeoutError(error)) {
+      console.error('Anonymous session restore timed out', error);
+      return false;
+    }
+
     console.error('Failed to restore anonymous session for game start', error);
     return false;
   }
@@ -1073,9 +1099,20 @@ export async function prepareGameSession(
   }
 
   try {
-    const startedAt = await startGameSession(db, level);
+    const startedAt = await withTimeout(
+      startGameSession(db, level),
+      NETWORK_TIMEOUT_MS,
+    );
     sessionStartedAtByLevel[level] = new Date(startedAt).getTime();
   } catch (error) {
+    if (isTimeoutError(error)) {
+      console.error('Game session RPC timed out', error);
+      return {
+        ok: false,
+        errorMessage: NETWORK_TIMEOUT_ERROR_MESSAGE,
+      };
+    }
+
     console.error('Failed to start game session', error);
     return {
       ok: false,

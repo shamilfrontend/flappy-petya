@@ -117,8 +117,10 @@ export function renderGame(host: GameHost): void {
       ctx,
       host.getPlayButtonLabel(),
       host.playBtn,
-      true,
-      0.5 + 0.5 * Math.sin(host.frames / 12),
+      !host.isStartingGame,
+      host.isStartingGame ? 0 : 0.5 + 0.5 * Math.sin(host.frames / 12),
+      1,
+      host.isStartingGame,
     );
     drawRecordsTab(ctx, RECORDS_BUTTON_LABEL, host.recordsBtn, false);
     drawRecordsTab(ctx, SETTINGS_BUTTON_LABEL, host.settingsBtn, false);
@@ -260,11 +262,12 @@ export function renderGame(host: GameHost): void {
       );
       drawButton(
         ctx,
-        SCORE_RETRY_BUTTON_LABEL,
+        host.isStartingGame ? 'Загрузка...' : SCORE_RETRY_BUTTON_LABEL,
         host.scoreRetryBtn,
         false,
         0,
         retryEntrance,
+        host.isStartingGame,
       );
     } else {
       drawSubtitle(

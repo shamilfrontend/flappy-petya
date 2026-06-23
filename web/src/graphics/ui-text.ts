@@ -569,6 +569,7 @@ export function drawButton(
   isSelected = false,
   pulse = 0,
   entrance = 1,
+  isDisabled = false,
 ): void {
   const clampedEntrance = Math.max(0, Math.min(1, entrance));
   const easedEntrance = clampedEntrance * clampedEntrance;
@@ -580,19 +581,36 @@ export function drawButton(
   ctx.translate(cx, cy);
   ctx.scale(entranceScale, entranceScale);
   ctx.translate(-cx, -cy);
-  ctx.globalAlpha = easedEntrance;
+  ctx.globalAlpha = isDisabled ? easedEntrance * 0.72 : easedEntrance;
 
-  if (pulse > 0) {
+  if (pulse > 0 && !isDisabled) {
     const scale = 1 + pulse * 0.06;
     ctx.translate(cx, cy);
     ctx.scale(scale, scale);
     ctx.translate(-cx, -cy);
   }
 
+  let topColor: string = '#FFFFFF';
+  let bottomColor: string = THEME.panel;
+  let borderColor: string = THEME.panelBorder;
+  let textFill: string = THEME.outline;
+
+  if (isDisabled) {
+    topColor = '#D8D8D8';
+    bottomColor = '#C4C4C4';
+    borderColor = '#A8A8A8';
+    textFill = '#6A6A6A';
+  } else if (isSelected) {
+    topColor = shade(THEME.accent, 28);
+    bottomColor = THEME.accent;
+    borderColor = THEME.outline;
+    textFill = THEME.text;
+  }
+
   fillRoundedPanel(ctx, rect.x, rect.y, rect.width, rect.height, 8, {
-    topColor: isSelected ? shade(THEME.accent, 28) : '#FFFFFF',
-    bottomColor: isSelected ? THEME.accent : THEME.panel,
-    border: isSelected ? THEME.outline : THEME.panelBorder,
+    topColor,
+    bottomColor,
+    border: borderColor,
     lineWidth: 2,
   });
 
@@ -603,7 +621,7 @@ export function drawButton(
     rect.y + rect.height / 2,
     {
       font: BUTTON_FONT,
-      fill: isSelected ? THEME.text : THEME.outline,
+      fill: textFill,
       strokeWidth: 2,
     },
   );

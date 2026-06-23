@@ -47,7 +47,7 @@ export { RESIZE_DEBOUNCE_MS } from './config';
 const GOOSE_URL = `${import.meta.env.BASE_URL}static/goose.png`;
 const GAME_OVER_URL = `${import.meta.env.BASE_URL}static/game-over-goose.png`;
 const LOGO_URL = `${import.meta.env.BASE_URL}static/logo.png`;
-const PLAY_BUTTON_LABEL = 'Играть';
+import { resolvePlayButtonLabel } from './game-labels';
 
 export class Game implements GameHost {
   canvas!: HTMLCanvasElement;
@@ -153,6 +153,9 @@ export class Game implements GameHost {
     void initStorage()
       .then(() => {
         this.syncStateFromStorage();
+        if (this.ctx) {
+          this.layoutUi();
+        }
       })
       .catch((err) => {
         console.error('Storage initialization failed', err);
@@ -200,7 +203,7 @@ export class Game implements GameHost {
   }
 
   getPlayButtonLabel(): string {
-    return PLAY_BUTTON_LABEL;
+    return resolvePlayButtonLabel(this.isStartingGame);
   }
 
   syncStateFromStorage(): void {

@@ -1,5 +1,5 @@
 import { getCanvasPoint, isPointInRect, type PressEvent } from '../../input/pointer';
-import { beginGame } from '../game-auth';
+import { retryGameFromScore } from '../game-auth';
 import type { GameHost } from '../game-host';
 import { GAME_STATES } from '../states';
 import { transitionToState } from '../state-transition';
@@ -37,5 +37,5 @@ export function handleScorePress(host: GameHost, evt: PressEvent): void {
     return;
   }
 
-  void beginGame(host, host.playerName);
+  void retryGameFromScore(host);
 }

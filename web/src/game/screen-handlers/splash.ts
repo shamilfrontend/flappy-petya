@@ -1,8 +1,16 @@
-import { getCanvasPoint, isPointInRect, type PressEvent } from '../../input/pointer';
+import { HAPTIC_EVENTS } from '../../input/haptic';
+import {
+  expandHitbox,
+  getCanvasPoint,
+  isPointInRect,
+  type PressEvent,
+} from '../../input/pointer';
 import { DIFFICULTIES } from '../difficulty';
 import type { GameHost } from '../game-host';
 import { GAME_STATES } from '../states';
 import { transitionToState } from '../state-transition';
+
+const PLAY_BUTTON_MIN_TOUCH_SIZE = 44;
 
 export function isSplashHoverTarget(host: GameHost, evt: PressEvent): boolean {
   const point = getCanvasPoint(host.canvas, evt, host.viewport);
@@ -10,8 +18,14 @@ export function isSplashHoverTarget(host: GameHost, evt: PressEvent): boolean {
     return false;
   }
 
+  const playHitbox = expandHitbox(
+    host.playBtn,
+    PLAY_BUTTON_MIN_TOUCH_SIZE,
+    PLAY_BUTTON_MIN_TOUCH_SIZE,
+  );
+
   if (
-    isPointInRect(point, host.playBtn)
+    isPointInRect(point, playHitbox)
     || isPointInRect(point, host.recordsBtn)
     || isPointInRect(point, host.settingsBtn)
   ) {
@@ -37,7 +51,13 @@ export function handleSplashPress(host: GameHost, evt: PressEvent): void {
     return;
   }
 
-  if (isPointInRect(point, host.playBtn)) {
+  const playHitbox = expandHitbox(
+    host.playBtn,
+    PLAY_BUTTON_MIN_TOUCH_SIZE,
+    PLAY_BUTTON_MIN_TOUCH_SIZE,
+  );
+
+  if (isPointInRect(point, playHitbox)) {
     if (host.playBtn.width <= 0 || host.playBtn.height <= 0) {
       console.warn('[game-start] Blocked start: invalid play button hitbox', {
         playBtn: host.playBtn,
@@ -45,10 +65,15 @@ export function handleSplashPress(host: GameHost, evt: PressEvent): void {
       return;
     }
 
+    if (host.isStartingGame) {
+      return;
+    }
+
     if (performance.now() < host.nextStartAllowedAtMs) {
       return;
     }
 
+    host.haptic.pulse(HAPTIC_EVENTS.Jump);
     void host.startGame();
     return;
   }

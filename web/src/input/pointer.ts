@@ -37,6 +37,22 @@ export function getCanvasPoint(
   return toLogicalPoint(canvas, coords.x, coords.y, viewport);
 }
 
+export function expandHitbox(
+  rect: { x: number; y: number; width: number; height: number },
+  minWidth: number,
+  minHeight: number,
+): { x: number; y: number; width: number; height: number } {
+  const width = Math.max(rect.width, minWidth);
+  const height = Math.max(rect.height, minHeight);
+
+  return {
+    x: rect.x - (width - rect.width) / 2,
+    y: rect.y - (height - rect.height) / 2,
+    width,
+    height,
+  };
+}
+
 export function isPointInRect(
   point: CanvasPoint,
   rect: { x: number; y: number; width: number; height: number },
