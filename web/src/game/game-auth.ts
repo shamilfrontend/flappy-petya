@@ -123,7 +123,7 @@ async function runGameStartFlow(
     }
 
     const prepareStartedAt = performance.now();
-    const sessionResult = await prepareGameSession(host.selectedDifficulty);
+    const sessionResult = await prepareGameSession(host.selectedDifficulty, name);
     const prepareSessionMs = performance.now() - prepareStartedAt;
     if (!sessionResult.ok) {
       if (sessionResult.errorMessage) {
@@ -227,7 +227,7 @@ export async function beginGame(
   let prepareSessionMs = options?.prepareSessionMs ?? 0;
   if (!options?.skipSessionPrepare) {
     const prepareStartedAt = performance.now();
-    const sessionResult = await prepareGameSession(host.selectedDifficulty);
+    const sessionResult = await prepareGameSession(host.selectedDifficulty, name);
     prepareSessionMs = performance.now() - prepareStartedAt;
 
     if (!sessionResult.ok) {

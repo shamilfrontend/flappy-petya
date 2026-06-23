@@ -576,6 +576,14 @@ export function getSelectedRecordsLevel(): DifficultyLevel | undefined {
   return getCacheProfile().selectedRecordsLevel;
 }
 
+function normalizePlayerName(name: string): string {
+  return name.trim();
+}
+
+function isPlayerNameTooLong(name: string): boolean {
+  return name.length > MAX_PLAYER_NAME_LENGTH;
+}
+
 export function savePlayerName(name: string): void {
   const trimmedName = normalizePlayerName(name);
   if (!trimmedName) {
@@ -641,6 +649,8 @@ const PLAYER_NAME_UNAVAILABLE_MESSAGE =
 const PLAYER_NAME_TOO_LONG_MESSAGE =
   `Имя слишком длинное (максимум ${MAX_PLAYER_NAME_LENGTH} символов).`;
 const SESSION_PREPARE_ERROR_MESSAGE = 'Не удалось подготовить игровую сессию.';
+const SESSION_AUTH_ERROR_MESSAGE =
+  'Сессия авторизации истекла. Обновите страницу и попробуйте снова.';
 const ANONYMOUS_NAME_PREFIX = 'Неопознанный';
 const ANONYMOUS_NAME_CODE_LENGTH = 5;
 const ANONYMOUS_NAME_SUFFIXES = [
@@ -697,14 +707,6 @@ const ANONYMOUS_NAME_SUFFIXES = [
 ] as const;
 const RANDOM_NAME_CLAIM_ATTEMPTS = 30;
 
-function normalizePlayerName(name: string): string {
-  return name.trim();
-}
-
-function isPlayerNameTooLong(name: string): boolean {
-  return name.length > MAX_PLAYER_NAME_LENGTH;
-}
-
 function pickRandomAnonymousSuffix(): string {
   const index = Math.floor(Math.random() * ANONYMOUS_NAME_SUFFIXES.length);
   return ANONYMOUS_NAME_SUFFIXES[index] ?? ANONYMOUS_NAME_SUFFIXES[0];
@@ -734,17 +736,69 @@ function buildRandomAnonymousName(): string {
   return `${ANONYMOUS_NAME_PREFIX} ${tail}`.trim();
 }
 
-export async function ensureRandomPlayerNameForSession(): Promise<string | null> {
-  const existingName = getSavedPlayerName().trim();
-  if (existingName) {
-    return existingName;
+function getSessionPrepareErrorMessage(error: unknown): string {
+  const message = `${(error as { message?: string }).message ?? ''}`.toLowerCase();
+
+  if (message.includes('not authenticated')) {
+    return SESSION_AUTH_ERROR_MESSAGE;
   }
 
+  if (message.includes('player profile required')) {
+    return SESSION_PREPARE_ERROR_MESSAGE;
+  }
+
+  if (isSupabasePermissionError(error)) {
+    return SESSION_AUTH_ERROR_MESSAGE;
+  }
+
+  return SESSION_PREPARE_ERROR_MESSAGE;
+}
+
+async function persistPlayerProfile(
+  db: ReturnType<typeof getSupabaseClient>,
+  uid: string,
+  name: string,
+): Promise<PlayerProfile | null> {
+  if (!db) {
+    return null;
+  }
+
+  const claimResult = await withTimeout(
+    claimPlayerName(db, uid, name, getCacheProfile()),
+    NETWORK_TIMEOUT_MS,
+  );
+
+  if (
+    claimResult.status === PLAYER_NAME_CLAIM_STATUS.Success
+    && claimResult.profile
+  ) {
+    setCacheProfile(claimResult.profile);
+    saveLocalPlayerName(claimResult.profile.name);
+    return claimResult.profile;
+  }
+
+  if (claimResult.status === PLAYER_NAME_CLAIM_STATUS.Error) {
+    console.error('Failed to persist player profile', claimResult.error);
+  }
+
+  return null;
+}
+
+export async function ensurePlayerProfileInDatabase(
+  playerName?: string,
+): Promise<string | null> {
   if (!isSupabaseEnabled()) {
+    const localName = playerName?.trim() || getSavedPlayerName().trim();
+    if (localName) {
+      return localName;
+    }
+
     const fallbackName = buildRandomAnonymousName();
     savePlayerName(fallbackName);
     return fallbackName;
   }
+
+  await waitForAuthReady();
 
   const uid = currentUid ?? getCurrentUid();
   const db = getSupabaseClient();
@@ -752,29 +806,49 @@ export async function ensureRandomPlayerNameForSession(): Promise<string | null>
     return null;
   }
 
-  for (let attempt = 0; attempt < RANDOM_NAME_CLAIM_ATTEMPTS; attempt += 1) {
-    const candidate = buildRandomAnonymousName();
-    const claimResult = await withTimeout(
-      claimPlayerName(db, uid, candidate, getCacheProfile()),
+  try {
+    const remoteProfile = await withTimeout(
+      fetchPlayerProfile(db, uid),
       NETWORK_TIMEOUT_MS,
     );
 
-    if (
-      claimResult.status === PLAYER_NAME_CLAIM_STATUS.Success
-      && claimResult.profile
-    ) {
-      setCacheProfile(claimResult.profile);
-      saveLocalPlayerName(claimResult.profile.name);
-      return claimResult.profile.name;
+    if (remoteProfile?.name?.trim()) {
+      setCacheProfile({
+        ...getCacheProfile(),
+        name: remoteProfile.name,
+      });
+      saveLocalPlayerName(remoteProfile.name);
+      return remoteProfile.name;
+    }
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw error;
     }
 
-    if (claimResult.status === PLAYER_NAME_CLAIM_STATUS.Error) {
-      console.error('Failed to claim random anonymous player name', claimResult.error);
-      return null;
+    console.error('Failed to fetch player profile before game start', error);
+  }
+
+  const preferredName = playerName?.trim() || getSavedPlayerName().trim();
+  if (preferredName) {
+    const profile = await persistPlayerProfile(db, uid, preferredName);
+    if (profile?.name) {
+      return profile.name;
+    }
+  }
+
+  for (let attempt = 0; attempt < RANDOM_NAME_CLAIM_ATTEMPTS; attempt += 1) {
+    const candidate = buildRandomAnonymousName();
+    const profile = await persistPlayerProfile(db, uid, candidate);
+    if (profile?.name) {
+      return profile.name;
     }
   }
 
   return null;
+}
+
+export async function ensureRandomPlayerNameForSession(): Promise<string | null> {
+  return ensurePlayerProfileInDatabase();
 }
 
 export async function validatePlayerNameForStart(
@@ -798,16 +872,6 @@ export async function validatePlayerNameForStart(
   const uid = currentUid ?? getCurrentUid();
   const profile = getCacheProfile();
 
-  // Если имя уже принадлежит текущему пользователю, повторная проверка не нужна.
-  if (
-    profile.name
-    && profile.name.trim().toLowerCase() === trimmedName.toLowerCase()
-  ) {
-    return {
-      status: PLAYER_NAME_VALIDATION_STATUS.Success,
-    };
-  }
-
   if (!isSupabaseEnabled()) {
     savePlayerName(trimmedName);
     return {
@@ -828,6 +892,34 @@ export async function validatePlayerNameForStart(
       status: PLAYER_NAME_VALIDATION_STATUS.Unavailable,
       message: PLAYER_NAME_UNAVAILABLE_MESSAGE,
     };
+  }
+
+  // Если имя уже в кэше, проверяем наличие профиля в БД перед пропуском claim.
+  if (
+    profile.name
+    && profile.name.trim().toLowerCase() === trimmedName.toLowerCase()
+  ) {
+    try {
+      const remoteProfile = await withTimeout(
+        fetchPlayerProfile(db, uid),
+        NETWORK_TIMEOUT_MS,
+      );
+
+      if (remoteProfile?.name?.trim()) {
+        return {
+          status: PLAYER_NAME_VALIDATION_STATUS.Success,
+        };
+      }
+    } catch (error) {
+      if (isTimeoutError(error)) {
+        return {
+          status: PLAYER_NAME_VALIDATION_STATUS.Unavailable,
+          message: NETWORK_TIMEOUT_ERROR_MESSAGE,
+        };
+      }
+
+      console.error('Failed to verify player profile in database', error);
+    }
   }
 
   const claimResult = await withTimeout(
@@ -1041,12 +1133,30 @@ async function ensureAnonymousSessionReady(): Promise<boolean> {
     return false;
   }
 
-  const existingUid = currentUid ?? getCurrentUid();
-  if (existingUid) {
-    return true;
-  }
+  initSupabaseClient();
+  initAuth();
 
   try {
+    await withTimeout(waitForAuthReady(), NETWORK_TIMEOUT_MS);
+
+    const db = getSupabaseClient();
+    if (!db) {
+      return false;
+    }
+
+    const { data: { session }, error: sessionError } = await db.auth.getSession();
+    if (sessionError) {
+      console.error('Failed to read Supabase session before game start', sessionError);
+    }
+
+    if (session?.user?.id) {
+      const uid = session.user.id;
+      if (currentUid !== uid) {
+        await withTimeout(loadStorageForUser(uid), NETWORK_TIMEOUT_MS);
+      }
+      return true;
+    }
+
     const anonymousUser = await withTimeout(
       signInAnonymouslyUser(),
       NETWORK_TIMEOUT_MS,
@@ -1071,6 +1181,7 @@ async function ensureAnonymousSessionReady(): Promise<boolean> {
 
 export async function prepareGameSession(
   level: DifficultyLevel,
+  playerName?: string,
 ): Promise<PrepareGameSessionResult> {
   if (!isSupabaseEnabled()) {
     return {
@@ -1080,6 +1191,29 @@ export async function prepareGameSession(
   }
 
   if (!(await ensureAnonymousSessionReady())) {
+    return {
+      ok: false,
+      errorMessage: SESSION_AUTH_ERROR_MESSAGE,
+    };
+  }
+
+  try {
+    const resolvedName = await ensurePlayerProfileInDatabase(playerName);
+    if (!resolvedName) {
+      return {
+        ok: false,
+        errorMessage: SESSION_PREPARE_ERROR_MESSAGE,
+      };
+    }
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      return {
+        ok: false,
+        errorMessage: NETWORK_TIMEOUT_ERROR_MESSAGE,
+      };
+    }
+
+    console.error('Failed to ensure player profile before game start', error);
     return {
       ok: false,
       errorMessage: SESSION_PREPARE_ERROR_MESSAGE,
@@ -1116,7 +1250,7 @@ export async function prepareGameSession(
     console.error('Failed to start game session', error);
     return {
       ok: false,
-      errorMessage: SESSION_PREPARE_ERROR_MESSAGE,
+      errorMessage: getSessionPrepareErrorMessage(error),
     };
   }
 

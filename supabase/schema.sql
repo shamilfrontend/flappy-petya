@@ -231,6 +231,8 @@ for select
 to anon, authenticated
 using (true);
 
+drop policy if exists game_sessions_select_own on public.game_sessions;
+
 create policy game_sessions_select_own
 on public.game_sessions
 for select

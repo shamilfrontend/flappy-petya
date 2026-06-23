@@ -169,6 +169,8 @@ begin
 end;
 $$;
 
+drop policy if exists game_sessions_select_own on public.game_sessions;
+
 create policy game_sessions_select_own
 on public.game_sessions
 for select
